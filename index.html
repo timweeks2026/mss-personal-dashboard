@@ -755,15 +755,29 @@ function buildSection(sectionKey, companies, endIdx) {
 // in-tab "not yet assigned" flag instead of silently vanishing or being
 // guessed into the wrong line — see Claude if that list needs sorting out.
 const BUSINESS_LINE_ACCOUNTS = {
+  // Verified against the actual QuickBooks P&L (parent/sub-account structure
+  // under "40100 CFO Services" / "50100 CFO Cost of Sales" and "40200 Music
+  // Revenue" / "50200 Music Cost of Sales") — not name-guessed. K1 Income and
+  // Profit Sharing are real sub-accounts of 40100 CFO Services in QBO, but are
+  // pulled out into their own Company Vitals (K1) line per Tim's call.
   "CFO Consulting": {
     income: ["40100 CFO Services", "CFO Services (Coaching)", "CFO Services (Monthly)", "CFO Services (Projects)", "CFO Services (Technology)"],
-    cos: ["50100 CFO Cost of Sales", "CFO Costs (General Expenses)", "CFO Costs (Team & Technology)", "CFO Costs (Travel)"]
+    cos: ["50100 CFO Cost of Sales", "CFO Costs (General Expenses)", "CFO Costs (Team & Technology)", "CFO Costs (Travel)", "IPN Fees"]
   },
   "Music": {
-    income: ["40200 Music Revenue", "Music Royalties", "Royalties", "YouTube Revenue", "Performance and Speaking Fees",
-      "Product Sales at Events", "Print on Demand Clothing", "Shipping Revenue", "Website Revenue"],
-    cos: ["50200 Music Cost of Sales", "Cost of Sales-Royalties to DB", "Concerts and Performances", "Recording and Studio",
-      "Print on Demand (COS)", "Inbound and Outbound Shipping", "Shipping Supplies", "Postage Expense", "Website Cost of Goods Sold"]
+    income: ["40200 Music Revenue", "Music Royalties", "Performance and Speaking Fees", "Print on Demand Clothing",
+      "Shipping Revenue", "Website Revenue",
+      // "Royalties" only exists in the personal file (not shown in the QBO
+      // screenshot, which is the business file) — per the original scoping
+      // call, all royalties from either file go to Music.
+      "Royalties"],
+    cos: ["50200 Music Cost of Sales", "Advertising Expense", "Concerts and Performances", "Cost of Goods Sold",
+      "Inbound and Outbound Shipping", "Live All In Expenses", "Merchant Fees", "Retreat Costs", "Shipping Supplies",
+      "Website Cost of Goods Sold",
+      // Personal-file pair to "Royalties" above — not in the QBO screenshot
+      // (business file) but named as the natural cost-side counterpart.
+      // Flagged to Tim for confirmation rather than silently assumed.
+      "Cost of Sales-Royalties to DB"]
   },
   "Company Vitals (K1)": {
     income: ["K1 Income - Company Vitals", "Profit Sharing (Company Vitals)"],
