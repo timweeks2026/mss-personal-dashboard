@@ -1,0 +1,1866 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MSS + Personal Financial Reporting</title>
+<style>
+  :root {
+    --navy: #0f2a4a;
+    --navy-light: #163a63;
+    --accent: #1a73e8;
+    --border: #d8dee6;
+    --bg: #f5f7fa;
+    --text: #1c2733;
+    --muted: #6b7684;
+    --good: #1e8e3e;
+    --bad: #b3261e;
+    --zebra: #f8f9fb;
+    --card-bg: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  #stickyTop {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  header {
+    background: var(--navy);
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  header h1 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+  header .sub { font-size: 12.5px; color: #b9c6d6; margin-top: 4px; }
+  .controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .controls label { font-size: 12px; color: #b9c6d6; display: block; margin-bottom: 4px; }
+  select {
+    font-size: 14px; padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--navy-light); background: #fff; color: var(--text);
+    min-width: 180px; cursor: pointer;
+  }
+  button#refreshBtn {
+    font-size: 13px; padding: 9px 14px; border-radius: 6px;
+    border: 1px solid #4a6a90; background: var(--navy-light); color: #fff; cursor: pointer;
+  }
+  button#refreshBtn:hover { background: #1d4670; }
+  button#refreshBtn:disabled { opacity: 0.6; cursor: default; }
+
+  .radio-group { display: flex; gap: 12px; }
+  .radio-group label {
+    display: flex; align-items: center; gap: 5px; font-size: 13px; color: #fff;
+    margin-bottom: 0; cursor: pointer;
+  }
+  .radio-group input { cursor: pointer; }
+
+  #status { padding: 8px 28px; font-size: 12.5px; color: var(--muted); background: #eef2f7; border-bottom: 1px solid var(--border); }
+  #status.error { color: var(--bad); background: #fdecea; }
+  #entityFlag { padding: 8px 28px; font-size: 12.5px; background: #fff8e1; color: #7a5b00; border-bottom: 1px solid var(--border); display: none; }
+  #entityFlag.show { display: block; }
+
+  main { padding: 20px 28px 48px; display: flex; flex-direction: column; gap: 26px; }
+
+  h2.section-title { font-size: 14px; margin: 0 0 4px; color: var(--navy); text-transform: uppercase; letter-spacing: 0.5px; }
+  .section-sub { font-size: 12px; color: var(--muted); margin: -2px 0 10px; }
+
+  /* ---- Statement table ---- */
+  .table-wrap { background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: auto; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid #eef1f5; }
+  thead th { position: sticky; top: 0; background: var(--navy); color: #fff; font-weight: 600; z-index: 3; font-size: 11.5px; }
+  thead tr.grp-head th { top: 0; z-index: 3; }
+  thead tr.sub-head th { top: 25px; z-index: 3; font-size: 10.5px; font-weight: 500; color: #cdd9ea; }
+  th.label-col, td.label-col { position: sticky; left: 0; text-align: left; background: #fff; z-index: 2; min-width: 260px; max-width: 260px; white-space: normal; }
+  thead th.label-col { background: var(--navy); z-index: 4; }
+  td.mir { background: #eaf1fb; font-weight: 700; }
+  thead th.mir { background: #1d4670; }
+  th.grp-start, td.grp-start { border-left: 2px solid var(--border); }
+  td.delta { color: var(--muted); }
+  td.delta.good { color: var(--good); }
+  td.delta.bad { color: var(--bad); }
+  td.delta.flat { color: var(--muted); }
+  th.narrow, td.narrow { font-size: 11px; min-width: 46px; }
+
+  tr.detail td { color: var(--text); font-size: 12.5px; }
+  tr.detail:nth-child(odd) td { background: var(--zebra); }
+  tr.detail:nth-child(odd) td.label-col { background: var(--zebra); }
+  tr.detail td.label-col { padding-left: 30px; }
+
+  tr.summary-line td { font-weight: 700; background: #fff; border-top: 1px solid var(--border); }
+  tr.summary-line td.mir { background: #dde9fa; }
+  tr.margin-line td { font-weight: 400; font-style: italic; color: var(--muted); font-size: 12px; background: #fff; }
+  tr.margin-line td.mir { background: #eaf1fb; }
+  tr.section-sub-header td { background: #eef2f7; font-weight: 600; font-size: 11.5px; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
+  tr.section-sub-header td.label-col { background: #eef2f7; padding-left: 30px; }
+
+  tr.grandtotal td { font-weight: 800; background: var(--navy); color: #fff; border-top: 2px solid var(--navy); }
+  tr.grandtotal td.mir { background: #163a63; }
+  tr.grandtotal td.label-col { background: var(--navy); color: #fff; }
+
+  .neg { color: var(--bad); }
+
+  .chev {
+    display: inline-block; width: 14px; cursor: pointer; user-select: none; color: var(--accent);
+    font-size: 11px; margin-right: 4px;
+  }
+  .no-chev { display: inline-block; width: 14px; margin-right: 4px; }
+  .expand-toggle { cursor: pointer; }
+
+  /* ---- Trend & comparison cards ---- */
+  /* Fixed 4 columns so the 7 cards land as 4-on-top / 3-on-bottom (the P&L's
+     three profitability "stops" — Gross Profit, Operating Income, Net Income —
+     form the deliberate bottom row). */
+  .card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 1000px) { .card-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .card-grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
+  .card .card-title { font-size: 12.5px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
+  .card .card-value { font-size: 22px; font-weight: 800; margin-top: 4px; }
+  .card .card-margin { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+
+  .chip-row-caption { font-size: 10.5px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .chip-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .chip {
+    flex: 1 1 auto; min-width: 54px; text-align: center; border-radius: 7px; background: #f1f4f8;
+    padding: 5px 4px; font-size: 11px; border: 1px solid var(--border);
+  }
+  .chip .chip-label { color: var(--muted); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .chip .chip-value { font-weight: 700; font-size: 12px; margin-top: 1px; }
+  .chip.na { color: var(--muted); background: #f7f8fa; }
+  .chip .arrow-good { color: var(--good); }
+  .chip .arrow-bad { color: var(--bad); }
+  .chip .arrow-flat { color: var(--muted); }
+
+  .cmp-rows { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .cmp-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; }
+  .cmp-row .cmp-label { color: var(--muted); }
+  .cmp-row .cmp-value { font-weight: 700; }
+  .cmp-row .cmp-value.arrow-good { color: var(--good); }
+  .cmp-row .cmp-value.arrow-bad { color: var(--bad); }
+  .cmp-row .cmp-value.arrow-flat { color: var(--muted); }
+  .cmp-na { color: var(--muted); font-style: italic; font-size: 11.5px; }
+
+  footer { padding: 6px 28px 24px; font-size: 11.5px; color: var(--muted); }
+  .empty-note { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* ---- Tabs ---- */
+  .tabs { display: flex; gap: 4px; padding: 0 28px; background: var(--navy-light); }
+  .tab-btn {
+    background: transparent; border: none; color: #b9c6d6; padding: 12px 18px;
+    font-size: 13px; cursor: pointer; border-bottom: 3px solid transparent;
+  }
+  .tab-btn:hover { color: #fff; }
+  .tab-btn.active { color: #fff; border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-panel[hidden] { display: none; }
+
+  .inline-control { margin: 6px 0 10px; }
+  .inline-control label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .inline-control select {
+    font-size: 14px; padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: #fff; color: var(--text);
+    min-width: 280px; cursor: pointer;
+  }
+
+  /* ---- Changes Analysis tab ---- */
+  .analysis-summary {
+    font-size: 13px; color: var(--text); margin-bottom: 16px; line-height: 1.5;
+    background: #eef2f7; border-radius: 8px; padding: 12px 14px;
+  }
+  .analysis-meta { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+  .analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 860px) { .analysis-grid { grid-template-columns: 1fr; } }
+  .analysis-col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 10px; }
+  .analysis-col.positive h3 { color: var(--good); }
+  .analysis-col.negative h3 { color: var(--bad); }
+  .analysis-item {
+    background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .analysis-col.positive .analysis-item { border-left-color: var(--good); }
+  .analysis-col.negative .analysis-item { border-left-color: var(--bad); }
+  .analysis-item .ai-head { display: flex; align-items: baseline; gap: 0; }
+  .analysis-item .ai-account { font-weight: 700; font-size: 13px; }
+  .analysis-item .ai-badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--muted); margin-left: 8px; }
+  .analysis-item .ai-figures { font-size: 12px; color: var(--navy); margin-top: 4px; font-weight: 600; }
+  .analysis-item .ai-note { font-size: 12.5px; color: var(--text); margin-top: 6px; line-height: 1.4; }
+  .analysis-item .ai-hide-btn {
+    margin-left: auto; font-size: 10.5px; padding: 3px 8px; border-radius: 5px;
+    border: 1px solid var(--border); background: #f4f6f8; color: var(--muted); cursor: pointer;
+  }
+  .analysis-item .ai-hide-btn:hover { background: #e9edf1; color: var(--text); }
+  .analysis-item.hidden-finding { opacity: 0.5; }
+  .analysis-item.hidden-finding .ai-hide-btn { border-color: var(--accent); color: var(--accent); background: #eaf1fb; }
+  .analysis-empty { padding: 40px; text-align: center; color: var(--muted); }
+  .analysis-empty .ae-icon { font-size: 26px; margin-bottom: 8px; }
+
+  /* ---- Balance Sheet & Cash Flow tabs ---- */
+  .balance-check { margin-top: 10px; padding: 10px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; }
+  .balance-check.ok { background: #e6f4ea; color: var(--good); }
+  .balance-check.warn { background: #fdecea; color: var(--bad); }
+
+  .debt-card { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+  .debt-stat .card-title { font-size: 11px; }
+  .debt-stat .card-value { font-size: 20px; }
+  .debt-stat .card-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .debt-detail-toggle {
+    font-size: 12px; color: var(--accent); cursor: pointer; margin-top: 6px; display: inline-block;
+    user-select: none;
+  }
+  .debt-detail-wrap { flex-basis: 100%; overflow-x: auto; }
+  .debt-detail-table { margin-top: 10px; width: 100%; border-collapse: collapse; font-size: 12px; }
+  .debt-detail-table th, .debt-detail-table td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+  .debt-detail-table th:first-child, .debt-detail-table td:first-child { text-align: left; }
+  .debt-detail-table th { color: #fff; font-weight: 600; font-size: 10.5px; text-transform: uppercase; }
+
+  /* ---- Account Trends tab ---- */
+  .chart-card {
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 14px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(20,30,45,0.05);
+  }
+  .chart-card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 4px; }
+  .chart-card-title { font-size: 11.5px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
+  .chip-row.compact { margin-top: 0; gap: 4px; }
+  .chip-row.compact .chip { min-width: 40px; padding: 3px 3px; }
+  .chip-row.compact .chip-label { font-size: 8px; }
+  .chip-row.compact .chip-value { font-size: 10px; }
+  .chart-svg-wrap { position: relative; }
+  .chart-svg-wrap svg { width: 100%; height: auto; display: block; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; background: var(--navy); color: #fff;
+    padding: 6px 9px; border-radius: 6px; font-size: 11px; display: none; z-index: 5;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25); white-space: nowrap;
+  }
+  .chart-tooltip-value { font-weight: 700; font-size: 13px; }
+  .chart-tooltip-label { color: #b9c6d6; font-size: 10px; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div id="stickyTop">
+<header>
+  <div>
+    <h1>MSS + Personal Financial Reporting</h1>
+    <div class="sub">Live-connected to Google Sheets · Data (MSS+Personal) → PL Detail (Mapped) / BS Detail (Mapped)</div>
+  </div>
+  <div class="controls">
+    <div>
+      <label for="entitySelect">Entity</label>
+      <select id="entitySelect"></select>
+    </div>
+    <div>
+      <label for="monthSelect">Month in Review</label>
+      <select id="monthSelect"></select>
+    </div>
+    <div>
+      <label>$ Display</label>
+      <div class="radio-group">
+        <label><input type="radio" name="scaleMode" value="actual" checked> Actual $</label>
+        <label><input type="radio" name="scaleMode" value="thousands"> In Thousands</label>
+      </div>
+    </div>
+    <button id="refreshBtn" type="button">Refresh Data</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="statement" type="button">P&amp;L Statement</button>
+  <button class="tab-btn" data-tab="analysis" type="button">Changes Analysis</button>
+  <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
+  <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
+  <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
+</nav>
+
+<div id="status">Loading…</div>
+<div id="entityFlag"></div>
+</div>
+
+<main>
+  <div id="panel-statement" class="tab-panel">
+    <section>
+      <h2 class="section-title">P&amp;L Statement</h2>
+      <div class="section-sub" id="statementSub"></div>
+      <div class="table-wrap"><table id="plTable"></table></div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Trend &amp; Period Comparisons</h2>
+      <div class="section-sub" id="trendSub"></div>
+      <div class="card-grid" id="cardGrid"></div>
+    </section>
+  </div>
+
+  <div id="panel-analysis" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Changes Analysis</h2>
+      <div class="section-sub" id="analysisSub"></div>
+      <div id="analysisEmpty" class="analysis-empty" style="display:none;">
+        <div class="ae-icon">✎</div>
+        <div>Not yet analyzed for this entity/month — ask Claude to run this month.</div>
+      </div>
+      <div id="analysisBody" style="display:none;">
+        <div class="analysis-summary" id="analysisSummary"></div>
+        <div class="analysis-meta" id="analysisMeta"></div>
+        <div class="analysis-grid">
+          <div class="analysis-col positive">
+            <h3>Favorable Changes</h3>
+            <div id="analysisPositive"></div>
+          </div>
+          <div class="analysis-col negative">
+            <h3>Unfavorable Changes</h3>
+            <div id="analysisNegative"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="panel-charts" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Account Trends</h2>
+      <div class="section-sub">Trailing 25 months ending on the Month in Review selected above, for the entity selected above.</div>
+      <div class="inline-control">
+        <label for="chartAccountSelect">Account</label>
+        <select id="chartAccountSelect"></select>
+      </div>
+      <div id="chartsEmpty" class="empty-note" style="display:none;">No accounts available for this entity.</div>
+      <div id="chartsContent">
+        <div class="section-sub" id="chartsHeading" style="font-weight:600; color:var(--navy);"></div>
+        <div class="chart-card">
+          <div class="chart-card-head">
+            <div class="chart-card-title">Actual $ by Month</div>
+            <div class="chip-row compact" id="chartDollarAvgRow"></div>
+          </div>
+          <div class="chart-svg-wrap">
+            <svg id="chartDollar"></svg>
+            <div class="chart-tooltip" id="chartDollarTooltip"></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-head">
+            <div class="chart-card-title">% of Revenue by Month</div>
+            <div class="chip-row compact" id="chartPctAvgRow"></div>
+          </div>
+          <div class="chart-svg-wrap">
+            <svg id="chartPct"></svg>
+            <div class="chart-tooltip" id="chartPctTooltip"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="panel-balancesheet" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Balance Sheet</h2>
+      <div class="section-sub" id="bsSub"></div>
+      <div class="table-wrap"><table id="bsTable"></table></div>
+      <div id="bsCheck" class="balance-check"></div>
+    </section>
+  </div>
+
+  <div id="panel-cashflow" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Debt Paid Down This Period</h2>
+      <div class="section-sub">Reductions in outstanding loan/mortgage balances during the period, separate from any new borrowing in the same period.</div>
+      <div class="card debt-card" id="debtCard"></div>
+    </section>
+    <section>
+      <h2 class="section-title">Statement of Cash Flows</h2>
+      <div class="section-sub" id="cfSub"></div>
+      <div class="table-wrap"><table id="cfTable"></table></div>
+      <div id="cfCheck" class="balance-check"></div>
+    </section>
+  </div>
+</main>
+
+<footer id="footerNote"></footer>
+
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=607248385&single=true&output=csv";
+const BS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1691156209&single=true&output=csv";
+
+// Fallback list used only if the sheet doesn't yet publish a "Consolidated Flag"
+// column. Once that column exists, entity membership is driven entirely by
+// the sheet and this list is ignored.
+const CORE_ENTITIES = [
+  "Midnight Sun Services, LLC",
+  "Tim and Hilary Weeks"
+];
+
+const SECTION_KEYS = ["Income", "Cost of Goods Sold", "Expenses", "Other Income", "Other Expenses"];
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const AVG_WINDOWS = [
+  { key: "3mo", label: "3-Mo", months: 3 },
+  { key: "6mo", label: "6-Mo", months: 6 },
+  { key: "12mo", label: "12-Mo", months: 12 },
+  { key: "3yr", label: "3-Yr", months: 36 },
+  { key: "5yr", label: "5-Yr", months: 60 }
+];
+
+let monthLabels = [];       // raw strings, e.g. "Aug 21"
+let months = [];            // parsed [{label, year, monthNum, index}]
+let records = [];           // {section, company, standardAccount, values:[...], flag}
+let bsRecords = [];         // {topLevel, category, company, standardAccount, values:[...], flag}
+let allCompanies = [];
+let hasFlagColumn = false;
+let entityGroups = { consolidated: [], excludedClassified: [], unclassified: [] };
+let expandedKeys = new Set();
+let currentMonthIdx = -1;
+let scaleMode = "actual"; // "actual" | "thousands" — affects fmtMoney only, never fmtPct
+let debtDetailOpen = false;
+
+// ---- Balance Sheet / Cash Flow category vocabulary. Keys match the exact
+// "Category" text produced by the Standard BS COA tab's carry-forward
+// classifier (verbatim raw QBO section headers — e.g. "Non-current liabilities"
+// and "Other Current Liability" are QBO's actual wording, not typos). Display
+// labels below normalize these into standard financial-statement terms. ----
+const BS_CATEGORY_ORDER = {
+  assets: ["Bank Accounts", "Accounts Receivable", "Other Current Assets", "Fixed Assets", "Other Assets"],
+  liabilities: ["Accounts Payable", "Credit Cards", "Other Current Liability", "Non-current liabilities"],
+  equity: ["Equity"]
+};
+const BS_CATEGORY_LABEL = {
+  "Bank Accounts": "Bank Accounts", "Accounts Receivable": "Accounts Receivable",
+  "Other Current Assets": "Other Current Assets", "Fixed Assets": "Fixed Assets", "Other Assets": "Other Assets",
+  "Accounts Payable": "Accounts Payable", "Credit Cards": "Credit Cards",
+  "Other Current Liability": "Other Current Liabilities", "Non-current liabilities": "Long-Term Liabilities",
+  "Equity": "Equity"
+};
+// Cash flow sign convention: +1 = balance increase is a cash inflow (liabilities/equity),
+// -1 = balance increase is a cash outflow (assets). Bank Accounts is cash itself — excluded.
+const BS_CF_SIGN = {
+  "Accounts Receivable": -1, "Other Current Assets": -1, "Fixed Assets": -1, "Other Assets": -1,
+  "Accounts Payable": 1, "Credit Cards": 1, "Other Current Liability": 1,
+  "Non-current liabilities": 1, "Equity": 1
+};
+const BS_CF_OPERATING = ["Accounts Receivable", "Other Current Assets", "Accounts Payable", "Credit Cards", "Other Current Liability"];
+const BS_CF_INVESTING = ["Fixed Assets", "Other Assets"];
+const BS_CF_FINANCING = ["Non-current liabilities", "Equity"];
+
+function parseCSV(str) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i];
+    if (inQuotes) {
+      if (c === '"') { if (str[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; } }
+      else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (c === "\r") { /* skip */ }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseNum(s) {
+  if (s == null) return 0;
+  s = String(s).trim();
+  if (s === "") return 0;
+  let neg = false;
+  if (s.startsWith("(") && s.endsWith(")")) { neg = true; s = s.slice(1, -1); }
+  s = s.replace(/,/g, "").replace(/\$/g, "").trim();
+  const n = parseFloat(s);
+  if (isNaN(n)) return 0;
+  return neg ? -n : n;
+}
+
+function parseMonthLabel(label, idx) {
+  const parts = label.trim().split(/\s+/);
+  const mIdx = MONTH_NAMES.indexOf(parts[0]);
+  const year = 2000 + parseInt(parts[1], 10);
+  return { label, year, monthNum: mIdx, index: idx };
+}
+
+function fmtMoney(n) {
+  if (n == null || !isFinite(n)) return "—";
+  const scaled = scaleMode === "thousands" ? n / 1000 : n;
+  const suffix = scaleMode === "thousands" ? "K" : "";
+  const r = Math.round(scaled);
+  const abs = Math.abs(r);
+  const s = abs.toLocaleString("en-US");
+  return r < 0 ? `($${s}${suffix})` : `$${s}${suffix}`;
+}
+
+function fmtPct(n) {
+  if (n == null || !isFinite(n)) return "—";
+  const r = n * 100;
+  const s = Math.abs(r).toFixed(1) + "%";
+  return r < 0 ? `(${s})` : s;
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = isError ? "error" : "";
+}
+
+// Parses a "Mapped" CSV whose first `leadingCols` columns are text fields,
+// followed by one column per month, followed optionally by a Consolidated Flag
+// column. Shared shape between PL Detail (Mapped) and BS Detail (Mapped).
+function parseMappedRows(text, leadingCols) {
+  const rows = parseCSV(text);
+  if (!rows.length) throw new Error("Empty response");
+  const header = rows[0];
+  let monthEnd = leadingCols;
+  while (monthEnd < header.length && header[monthEnd].trim() !== "" && header[monthEnd].trim().toLowerCase() !== "consolidated flag") monthEnd++;
+  const labels = header.slice(leadingCols, monthEnd);
+  let flagCol = -1;
+  for (let c = monthEnd; c < header.length; c++) {
+    if (header[c].trim().toLowerCase() === "consolidated flag") { flagCol = c; break; }
+  }
+  return { rows, labels, monthEnd, flagCol };
+}
+
+async function loadData() {
+  const btn = document.getElementById("refreshBtn");
+  btn.disabled = true;
+  setStatus("Loading live data from Google Sheets…");
+  try {
+    const [plText, bsText] = await Promise.all([
+      fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status + " (P&L)");
+        return r.text();
+      }),
+      fetch(BS_CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status + " (Balance Sheet)");
+        return r.text();
+      })
+    ]);
+
+    const pl = parseMappedRows(plText, 4);
+    monthLabels = pl.labels;
+    months = monthLabels.map((l, i) => parseMonthLabel(l, i));
+    hasFlagColumn = pl.flagCol !== -1;
+
+    records = [];
+    const companySet = new Set();
+    const flagByCompany = new Map();
+    for (let i = 1; i < pl.rows.length; i++) {
+      const r = pl.rows[i];
+      if (r.length < 4) continue;
+      const section = r[0].trim();
+      const company = r[2].trim();
+      const standardAccount = r[3].trim();
+      if (!company || !standardAccount) continue;
+      const values = [];
+      for (let m = 4; m < pl.monthEnd; m++) values.push(parseNum(r[m]));
+      const flag = hasFlagColumn ? (r[pl.flagCol] || "").trim() : null;
+      records.push({ section, company, standardAccount, values, flag });
+      companySet.add(company);
+      if (flag) flagByCompany.set(company, flag);
+    }
+    allCompanies = [...companySet].sort();
+
+    // BS Detail (Mapped): Top Level, Category, Raw Account, Company, Standard Account, months…, Consolidated Flag
+    const bs = parseMappedRows(bsText, 5);
+    bsRecords = [];
+    for (let i = 1; i < bs.rows.length; i++) {
+      const r = bs.rows[i];
+      if (r.length < 5) continue;
+      const topLevel = r[0].trim();
+      const category = r[1].trim();
+      const company = r[3].trim();
+      const standardAccount = r[4].trim();
+      if (!company || !standardAccount) continue;
+      const values = [];
+      for (let m = 5; m < bs.monthEnd; m++) values.push(parseNum(r[m]));
+      bsRecords.push({ topLevel, category, company, standardAccount, values });
+    }
+    if (bs.labels.length !== monthLabels.length) {
+      console.warn("Balance Sheet month columns (" + bs.labels.length + ") don't match P&L (" + monthLabels.length + ") — BS/Cash Flow tabs may misalign.");
+    }
+
+    buildEntityGroups(flagByCompany);
+    populateEntityDropdown();
+    populateMonthDropdown();
+    render();
+    setStatus("Live — last refreshed " + new Date().toLocaleString());
+  } catch (err) {
+    setStatus("Couldn't load live data: " + err.message + ". Check your connection and try Refresh.", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function buildEntityGroups(flagByCompany) {
+  entityGroups = { consolidated: [], excludedClassified: [], unclassified: [] };
+  if (hasFlagColumn) {
+    for (const company of allCompanies) {
+      const flag = (flagByCompany.get(company) || "").toUpperCase();
+      if (flag === "TRUE") entityGroups.consolidated.push(company);
+      else if (flag === "FALSE") entityGroups.excludedClassified.push(company);
+      else entityGroups.unclassified.push(company);
+    }
+  } else {
+    for (const company of allCompanies) {
+      if (CORE_ENTITIES.includes(company)) entityGroups.consolidated.push(company);
+      else entityGroups.excludedClassified.push(company);
+    }
+  }
+}
+
+function populateEntityDropdown() {
+  const sel = document.getElementById("entitySelect");
+  const prevValue = sel.value;
+  sel.innerHTML = "";
+
+  const optConsolidated = document.createElement("option");
+  optConsolidated.value = "__CONSOLIDATED__";
+  optConsolidated.textContent = `Consolidated (${entityGroups.consolidated.length} Entities)`;
+  sel.appendChild(optConsolidated);
+
+  entityGroups.consolidated.forEach(name => sel.appendChild(new Option(name, name)));
+
+  if (entityGroups.excludedClassified.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Other companies (excluded from Consolidated)";
+    entityGroups.excludedClassified.forEach(name => group.appendChild(new Option(name, name)));
+    sel.appendChild(group);
+  }
+
+  if (entityGroups.unclassified.length) {
+    const group = document.createElement("optgroup");
+    group.label = "⚠ Needs review — not yet classified";
+    entityGroups.unclassified.forEach(name => group.appendChild(new Option(name, name)));
+    sel.appendChild(group);
+  }
+
+  if (prevValue && [...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
+
+  const flagEl = document.getElementById("entityFlag");
+  if (entityGroups.unclassified.length) {
+    flagEl.textContent = `⚠ ${entityGroups.unclassified.length} compan${entityGroups.unclassified.length === 1 ? "y" : "ies"} in the source data ` +
+      `${entityGroups.unclassified.length === 1 ? "hasn't" : "haven't"} been classified yet (not in the Entities tab) — excluded from Consolidated until reviewed: ` +
+      entityGroups.unclassified.join(", ");
+    flagEl.classList.add("show");
+  } else {
+    flagEl.classList.remove("show");
+  }
+}
+
+function populateMonthDropdown() {
+  const sel = document.getElementById("monthSelect");
+  const prevValue = sel.value;
+  sel.innerHTML = "";
+  months.forEach(m => sel.appendChild(new Option(m.label, String(m.index))));
+
+  if (prevValue && [...sel.options].some(o => o.value === prevValue)) {
+    sel.value = prevValue;
+  } else {
+    // Default to the most recent month with any nonzero activity anywhere.
+    let lastActive = months.length - 1;
+    for (let i = months.length - 1; i >= 0; i--) {
+      const hasData = records.some(r => r.values[i] !== 0);
+      if (hasData) { lastActive = i; break; }
+    }
+    sel.value = String(lastActive);
+  }
+  currentMonthIdx = parseInt(sel.value, 10);
+}
+
+function zeros(n) { return new Array(n).fill(0); }
+function addInto(target, src) { for (let i = 0; i < target.length; i++) target[i] += src[i]; }
+function sumArr(a) { return a.reduce((x, y) => x + y, 0); }
+function subSeries(a, b) { return a.map((v, i) => v - b[i]); }
+function addSeries(a, b) { return a.map((v, i) => v + b[i]); }
+function divSeries(num, den) { return num.map((v, i) => den[i] ? v / den[i] : null); }
+
+// A detail account is "active" if it has any nonzero activity in the trailing
+// 12 months ending at the month in review (or all available months if the
+// data doesn't go back that far yet). Accounts with no recent activity are
+// hidden entirely — no value in scrolling past a hundred all-zero lines.
+function hasRecentActivity(values, endIdx) {
+  const startIdx = Math.max(0, endIdx - 11);
+  for (let i = startIdx; i <= endIdx; i++) { if (values[i] !== 0) return true; }
+  return false;
+}
+
+function buildSection(sectionKey, companies, endIdx) {
+  const groups = new Map();
+  const n = monthLabels.length;
+  for (const rec of records) {
+    if (rec.section !== sectionKey) continue;
+    if (!companies.includes(rec.company)) continue;
+    if (!groups.has(rec.standardAccount)) groups.set(rec.standardAccount, zeros(n));
+    addInto(groups.get(rec.standardAccount), rec.values);
+  }
+  const total = zeros(n);
+  const rows = [];
+  for (const [account, values] of groups.entries()) {
+    addInto(total, values);
+    if (!hasRecentActivity(values, endIdx)) continue;
+    rows.push({ account, values });
+  }
+  rows.sort((a, b) => a.account.localeCompare(b.account));
+  return { rows, total };
+}
+
+// Same shape as buildSection but keyed by BS Category rather than P&L Section.
+function buildBsCategory(category, companies, endIdx) {
+  const groups = new Map();
+  const n = monthLabels.length;
+  for (const rec of bsRecords) {
+    if (rec.category !== category) continue;
+    if (!companies.includes(rec.company)) continue;
+    if (!groups.has(rec.standardAccount)) groups.set(rec.standardAccount, zeros(n));
+    addInto(groups.get(rec.standardAccount), rec.values);
+  }
+  const total = zeros(n);
+  const rows = [];
+  for (const [account, values] of groups.entries()) {
+    addInto(total, values);
+    if (!hasRecentActivity(values, endIdx)) continue;
+    rows.push({ account, values });
+  }
+  rows.sort((a, b) => a.account.localeCompare(b.account));
+  return { rows, total };
+}
+
+// Month-over-month delta series. First month has no prior — treated as 0
+// rather than null since it never falls within any real "period in review".
+function toDeltaSeries(values) {
+  return values.map((v, i) => i === 0 ? 0 : v - values[i - 1]);
+}
+function signedDelta(values, sign) {
+  return toDeltaSeries(values).map(v => v * sign);
+}
+
+// Net Income per month for a set of companies, built the same way the P&L
+// statement derives it (SECTION_POLARITY), so the Cash Flow tab's Operating
+// section always agrees with the P&L Statement tab's Net Income line.
+function netIncomeSeries(companies) {
+  const n = monthLabels.length;
+  const total = zeros(n);
+  for (const key of SECTION_KEYS) {
+    const sign = SECTION_POLARITY[key] === "pos" ? 1 : -1;
+    for (const rec of records) {
+      if (rec.section !== key) continue;
+      if (!companies.includes(rec.company)) continue;
+      for (let i = 0; i < n; i++) total[i] += sign * rec.values[i];
+    }
+  }
+  return total;
+}
+
+// Indirect-method cash flow model for a set of companies. The raw "Equity"
+// category includes a QBO-generated "Net Income" line that mirrors the P&L's
+// running total — included as-is it would double-count against the Operating
+// section's Net Income line, so it's excluded here specifically (Balance
+// Sheet tab still shows it; only the Financing bundle omits it).
+function buildCashFlow(companies) {
+  const n = monthLabels.length;
+  const netIncome = netIncomeSeries(companies);
+
+  function catBundle(category) {
+    const { rows, total } = buildBsCategory(category, companies, n - 1);
+    const sign = BS_CF_SIGN[category];
+    let effRows = rows, effTotal = total;
+    if (category === "Equity") {
+      effRows = rows.filter(r => r.account !== "Net Income");
+      effTotal = zeros(n);
+      effRows.forEach(r => addInto(effTotal, r.values));
+    }
+    return {
+      category,
+      rows: effRows.map(r => ({ account: r.account, values: signedDelta(r.values, sign) })),
+      total: signedDelta(effTotal, sign)
+    };
+  }
+
+  const operating = BS_CF_OPERATING.map(catBundle);
+  const investing = BS_CF_INVESTING.map(catBundle);
+  const financing = BS_CF_FINANCING.map(catBundle);
+
+  const operatingTotal = operating.reduce((acc, c) => addSeries(acc, c.total), netIncome);
+  const investingTotal = investing.reduce((acc, c) => addSeries(acc, c.total), zeros(n));
+  const financingTotal = financing.reduce((acc, c) => addSeries(acc, c.total), zeros(n));
+  const netChange = addSeries(addSeries(operatingTotal, investingTotal), financingTotal);
+
+  const cash = buildBsCategory("Bank Accounts", companies, n - 1).total;
+
+  return { netIncome, operating, investing, financing, operatingTotal, investingTotal, financingTotal, netChange, cash };
+}
+
+// Debt paid down vs. new borrowing for a period, decomposed per loan — a loan
+// that both drew and paid within the same period counts toward both, since
+// "how much did we pay down" and "how much did we borrow" are separate
+// questions a lender/investor asks, not one netted answer.
+function debtPaydownForPeriod(financing, range) {
+  const ltl = financing.find(f => f.category === "Non-current liabilities");
+  if (!ltl || !range) return { paidDown: 0, newBorrowing: 0, perLoan: [] };
+  let paidDown = 0, newBorrowing = 0;
+  const perLoan = [];
+  for (const loan of ltl.rows) {
+    let loanPaidDown = 0, loanBorrowed = 0;
+    for (let i = range[0]; i <= range[1]; i++) {
+      const v = loan.values[i];
+      if (v < 0) loanPaidDown += -v; else loanBorrowed += v;
+    }
+    if (loanPaidDown === 0 && loanBorrowed === 0) continue;
+    paidDown += loanPaidDown;
+    newBorrowing += loanBorrowed;
+    perLoan.push({ account: loan.account, paidDown: loanPaidDown, newBorrowing: loanBorrowed });
+  }
+  perLoan.sort((a, b) => (b.paidDown - b.newBorrowing) - (a.paidDown - a.newBorrowing));
+  return { paidDown, newBorrowing, perLoan };
+}
+
+function monthIndexOf(year, monthNum) {
+  const m = months.find(mm => mm.year === year && mm.monthNum === monthNum);
+  return m ? m.index : -1;
+}
+
+function trailingAverage(series, endIdx, windowSize) {
+  const startIdx = endIdx - windowSize + 1;
+  if (startIdx < 0) return null;
+  let sum = 0;
+  for (let i = startIdx; i <= endIdx; i++) sum += series[i];
+  return sum / windowSize;
+}
+
+function trailingAverageRatio(numSeries, denSeries, endIdx, windowSize) {
+  const startIdx = endIdx - windowSize + 1;
+  if (startIdx < 0) return null;
+  let numSum = 0, denSum = 0;
+  for (let i = startIdx; i <= endIdx; i++) { numSum += numSeries[i]; denSum += denSeries[i]; }
+  return denSum ? numSum / denSum : null;
+}
+
+function sumRange(series, startIdx, endIdx) {
+  let s = 0;
+  for (let i = startIdx; i <= endIdx; i++) s += series[i];
+  return s;
+}
+
+function ytdRange(year, endMonthNum) {
+  const janIdx = monthIndexOf(year, 0);
+  const endIdx = monthIndexOf(year, endMonthNum);
+  if (janIdx < 0 || endIdx < 0) return null;
+  return [janIdx, endIdx];
+}
+function ttmRange(endIdx) { return endIdx >= 11 ? [endIdx - 11, endIdx] : null; }
+function priorTtmRange(endIdx) { return endIdx >= 23 ? [endIdx - 23, endIdx - 12] : null; }
+
+// ---- Period pairs (current vs. prior), used by both the statement table's
+// This-Month/YTD/TTM column groups and the cards' comparison rows. ----
+function monthPair(series, idx) {
+  const priIdx = idx - 12;
+  return { current: series[idx], prior: priIdx >= 0 ? series[priIdx] : null };
+}
+function monthPairRatio(num, den, idx) {
+  const priIdx = idx - 12;
+  return {
+    current: den[idx] ? num[idx] / den[idx] : null,
+    prior: (priIdx >= 0 && den[priIdx]) ? num[priIdx] / den[priIdx] : null
+  };
+}
+function ytdPair(series, idx) {
+  const y = months[idx].year, m = months[idx].monthNum;
+  const cur = ytdRange(y, m), pri = ytdRange(y - 1, m);
+  return {
+    current: cur ? sumRange(series, cur[0], cur[1]) : null,
+    prior: pri ? sumRange(series, pri[0], pri[1]) : null
+  };
+}
+function ytdPairRatio(num, den, idx) {
+  const y = months[idx].year, m = months[idx].monthNum;
+  const cur = ytdRange(y, m), pri = ytdRange(y - 1, m);
+  const curDen = cur ? sumRange(den, cur[0], cur[1]) : 0;
+  const priDen = pri ? sumRange(den, pri[0], pri[1]) : 0;
+  return {
+    current: (cur && curDen) ? sumRange(num, cur[0], cur[1]) / curDen : null,
+    prior: (pri && priDen) ? sumRange(num, pri[0], pri[1]) / priDen : null
+  };
+}
+function ttmPair(series, idx) {
+  const cur = ttmRange(idx), pri = priorTtmRange(idx);
+  return {
+    current: cur ? sumRange(series, cur[0], cur[1]) : null,
+    prior: pri ? sumRange(series, pri[0], pri[1]) : null
+  };
+}
+function ttmPairRatio(num, den, idx) {
+  const cur = ttmRange(idx), pri = priorTtmRange(idx);
+  const curDen = cur ? sumRange(den, cur[0], cur[1]) : 0;
+  const priDen = pri ? sumRange(den, pri[0], pri[1]) : 0;
+  return {
+    current: (cur && curDen) ? sumRange(num, cur[0], cur[1]) / curDen : null,
+    prior: (pri && priDen) ? sumRange(num, pri[0], pri[1]) / priDen : null
+  };
+}
+function periodPairsFor(series, idx) { return [monthPair(series, idx), ytdPair(series, idx), ttmPair(series, idx)]; }
+function periodPairsForRatio(num, den, idx) { return [monthPairRatio(num, den, idx), ytdPairRatio(num, den, idx), ttmPairRatio(num, den, idx)]; }
+
+const SECTION_POLARITY = {
+  "Income": "pos", "Cost of Goods Sold": "neg", "Expenses": "neg",
+  "Other Income": "pos", "Other Expenses": "neg"
+};
+
+function arrowFor(current, compare, polarity, epsilon) {
+  if (current == null || compare == null || !isFinite(current) || !isFinite(compare)) return { symbol: "–", cls: "flat" };
+  const diff = current - compare;
+  if (Math.abs(diff) < (epsilon != null ? epsilon : 0.5)) return { symbol: "–", cls: "flat" };
+  const up = diff > 0;
+  const favorable = polarity === "neg" ? !up : up;
+  return { symbol: up ? "▲" : "▼", cls: favorable ? "good" : "bad" };
+}
+
+function pctChange(current, prior) {
+  if (current == null || prior == null || !isFinite(current) || !isFinite(prior) || prior === 0) return null;
+  return (current - prior) / Math.abs(prior);
+}
+
+// ---- Render ----
+
+function render() {
+  const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
+  const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
+  const monthVal = document.getElementById("monthSelect").value;
+  currentMonthIdx = monthVal !== "" ? parseInt(monthVal, 10) : months.length - 1;
+
+  const n = monthLabels.length;
+  if (!n) {
+    document.getElementById("plTable").parentElement.innerHTML = '<div class="empty-note">No data available.</div>';
+    return;
+  }
+
+  const sectionData = {};
+  SECTION_KEYS.forEach(k => { sectionData[k] = buildSection(k, companies, currentMonthIdx); });
+
+  const revenue = sectionData["Income"].total;
+  const cos = sectionData["Cost of Goods Sold"].total;
+  const grossProfit = subSeries(revenue, cos);
+  const expenses = sectionData["Expenses"].total;
+  const operatingIncome = subSeries(grossProfit, expenses);
+  const otherIncome = sectionData["Other Income"].total;
+  const otherExpenses = sectionData["Other Expenses"].total;
+  const nonOperating = subSeries(otherIncome, otherExpenses);
+  const netIncome = addSeries(operatingIncome, nonOperating);
+
+  // Table order follows the traditional P&L top-to-bottom flow. Every line
+  // gets a "% of Revenue" row (num/den against total revenue) so the figure
+  // is available uniformly — Revenue's is trivially 100%, but that's fine.
+  const summaryLines = [
+    { key: "revenue", label: "Revenue", series: revenue, polarity: "pos", expand: ["Income"] },
+    { key: "cos", label: "Cost of Sales", series: cos, polarity: "neg", expand: ["Cost of Goods Sold"] },
+    { key: "grossProfit", label: "Gross Profit", series: grossProfit, polarity: "pos" },
+    { key: "expenses", label: "Expenses", series: expenses, polarity: "neg", expand: ["Expenses"] },
+    { key: "operatingIncome", label: "Operating Income", series: operatingIncome, polarity: "pos" },
+    { key: "nonOperating", label: "Non-Operating Items", series: nonOperating, polarity: "pos", expand: ["Other Income", "Other Expenses"] },
+    { key: "netIncome", label: "Net Income", series: netIncome, polarity: "pos" }
+  ];
+  summaryLines.forEach(line => {
+    line.pctOfRevenue = { series: divSeries(line.series, revenue), num: line.series, den: revenue };
+  });
+
+  renderStatement(summaryLines, sectionData);
+  renderCards(summaryLines);
+  renderAnalysis(entVal, companies);
+  renderCharts(companies, revenue);
+  renderBalanceSheet(entVal, companies);
+  renderCashFlow(entVal, companies);
+
+  document.getElementById("footerNote").textContent =
+    `Showing ${entVal === "__CONSOLIDATED__" ? "Consolidated (" + companies.length + " entities)" : entVal} · ` +
+    `Month in review: ${months[currentMonthIdx].label} · Detail accounts with no activity in the trailing 12 months are hidden · All figures rounded to whole dollars.`;
+}
+
+function entityDisplayName(entVal, companies) {
+  return entVal === "__CONSOLIDATED__" ? `Consolidated (${companies.length} entities)` : entVal;
+}
+
+// ---- Statement table: This Month / Year-to-Date / Trailing 12 Months, each
+// with Current, Prior, Δ$, Δ% — replaces the old flat 6-month strip. ----
+
+const COL_GROUPS = [
+  { label: "This Month", curLabel: () => months[currentMonthIdx].label, priLabel: "Prior Year" },
+  { label: "Year-to-Date", curLabel: () => "YTD", priLabel: "Prior Year YTD" },
+  { label: "Trailing 12 Months", curLabel: () => "TTM", priLabel: "Prior 12 Mo" }
+];
+
+// Shared by the P&L Statement and Cash Flow tabs — both use the This Month /
+// Year-to-Date / Trailing 12 Months column groups, each with 4 sub-columns.
+function buildPeriodThead() {
+  const thead = document.createElement("thead");
+  const grpRow = document.createElement("tr");
+  grpRow.className = "grp-head";
+  grpRow.appendChild(th("Line Item", "label-col"));
+  COL_GROUPS.forEach(g => {
+    const cell = th(g.label);
+    cell.colSpan = 4;
+    cell.classList.add("grp-start");
+    grpRow.appendChild(cell);
+  });
+  thead.appendChild(grpRow);
+
+  const subRow = document.createElement("tr");
+  subRow.className = "sub-head";
+  subRow.appendChild(th("", "label-col"));
+  COL_GROUPS.forEach(g => {
+    const c1 = th(g.curLabel()); c1.classList.add("grp-start"); subRow.appendChild(c1);
+    subRow.appendChild(th(g.priLabel));
+    subRow.appendChild(th("Δ$"));
+    const c4 = th("Δ%"); c4.classList.add("narrow"); subRow.appendChild(c4);
+  });
+  thead.appendChild(subRow);
+  return thead;
+}
+
+function renderStatement(summaryLines, sectionData) {
+  document.getElementById("statementSub").textContent =
+    `This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail.`;
+
+  const table = document.getElementById("plTable");
+  table.innerHTML = "";
+  table.appendChild(buildPeriodThead());
+
+  const tbody = document.createElement("tbody");
+
+  function addSummaryRow(label, series, polarity, expandKey) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells));
+  }
+  function addPctRow(pctOfRevenue, polarity) {
+    const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
+    tbody.appendChild(buildRow("margin-line", "% of Revenue", cells));
+  }
+  function addDetailRow(label, series, polarity) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+    tbody.appendChild(buildRow("detail", label, cells));
+  }
+  function addSubHeader(label) {
+    const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
+    tbody.appendChild(buildRow("section-sub-header", label, blanks));
+  }
+
+  summaryLines.forEach(line => {
+    addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null);
+    addPctRow(line.pctOfRevenue, line.polarity);
+    if (line.expand && expandedKeys.has(line.key)) {
+      line.expand.forEach(sectionKey => {
+        if (line.expand.length > 1) addSubHeader(sectionKey);
+        const pol = SECTION_POLARITY[sectionKey] || "pos";
+        sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
+      });
+    }
+  });
+
+  table.appendChild(tbody);
+
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
+}
+
+// Builds the 12 data cells (4 per period group) for one row, from 3 {current,prior} pairs.
+function buildPeriodCells(pairs, polarity, isPct) {
+  const cells = [];
+  pairs.forEach(({ current, prior }) => {
+    const arrow = arrowFor(current, prior, polarity, isPct ? 0.0005 : 0.5);
+    const deltaDollar = (current != null && prior != null) ? current - prior : null;
+    const deltaPct = pctChange(current, prior);
+    if (isPct) {
+      cells.push({ text: fmtPct(current), grpStart: true });
+      cells.push({ text: fmtPct(prior) });
+      cells.push({ text: deltaDollar != null ? fmtPct(deltaDollar) : "—", cls: "delta " + arrow.cls });
+      cells.push({ text: "—", cls: "delta narrow" });
+    } else {
+      cells.push({ text: fmtMoney(current), grpStart: true });
+      cells.push({ text: fmtMoney(prior) });
+      cells.push({ text: deltaDollar != null ? fmtMoney(deltaDollar) : "—", cls: "delta " + arrow.cls });
+      cells.push({ text: deltaPct != null ? fmtPct(deltaPct) : "—", cls: "delta narrow " + arrow.cls });
+    }
+  });
+  return cells;
+}
+
+function labelWithChevron(label, expandKey) {
+  if (!expandKey) return `<span class="no-chev"></span>${escapeHtml(label)}`;
+  const isOpen = expandedKeys.has(expandKey);
+  return `<span class="chev expand-toggle" data-key="${expandKey}">${isOpen ? "▾" : "▸"}</span>${escapeHtml(label)}`;
+}
+
+function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+function th(text, cls) {
+  const el = document.createElement("th");
+  el.textContent = text;
+  if (cls) el.className = cls;
+  return el;
+}
+
+function buildRow(rowClass, labelHtml, cells) {
+  const tr = document.createElement("tr");
+  tr.className = rowClass;
+  const labelTd = document.createElement("td");
+  labelTd.className = "label-col";
+  labelTd.innerHTML = labelHtml;
+  tr.appendChild(labelTd);
+  cells.forEach(c => {
+    const td = document.createElement("td");
+    td.textContent = c.text;
+    if (c.cls) c.cls.split(" ").forEach(cl => cl && td.classList.add(cl));
+    if (c.grpStart) td.classList.add("grp-start");
+    if (typeof c.text === "string" && c.text.startsWith("(")) td.classList.add("neg");
+    tr.appendChild(td);
+  });
+  return tr;
+}
+
+// ---- Balance Sheet tab: point-in-time balances — Current, Prior Month,
+// Prior Year, plus trailing average balances over 5 windows. No favorable/
+// unfavorable coloring since "more assets" isn't inherently good or bad the
+// way P&L movement is. ----
+const BS_COL_LABELS = ["Balance", "Prior Month", "Prior Year", "3-Mo Avg", "6-Mo Avg", "12-Mo Avg", "3-Yr Avg", "5-Yr Avg"];
+function buildBsCells(values, idx) {
+  const current = values[idx];
+  const priorMonth = idx >= 1 ? values[idx - 1] : null;
+  const priorYear = idx >= 12 ? values[idx - 12] : null;
+  const cells = [
+    { text: fmtMoney(current), grpStart: true },
+    { text: priorMonth != null ? fmtMoney(priorMonth) : "—" },
+    { text: priorYear != null ? fmtMoney(priorYear) : "—", grpStart: true }
+  ];
+  AVG_WINDOWS.forEach(w => {
+    const avg = trailingAverage(values, idx, w.months);
+    cells.push({ text: avg != null ? fmtMoney(avg) : "—" });
+  });
+  return cells;
+}
+
+function renderBalanceSheet(entVal, companies) {
+  document.getElementById("bsSub").textContent =
+    `Balance as of ${months[currentMonthIdx].label}, prior month, prior year, and trailing average balances. Click ▸ to expand account detail.`;
+
+  const table = document.getElementById("bsTable");
+  table.innerHTML = "";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(th("Line Item", "label-col"));
+  BS_COL_LABELS.forEach((label, i) => {
+    const cell = th(label);
+    if (i === 0 || i === 2) cell.classList.add("grp-start");
+    headRow.appendChild(cell);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  function addLine(label, values, expandKey, rowClass) {
+    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildBsCells(values, currentMonthIdx)));
+  }
+  function addDetail(label, values) {
+    tbody.appendChild(buildRow("detail", label, buildBsCells(values, currentMonthIdx)));
+  }
+  function addSubHeader(label) {
+    tbody.appendChild(buildRow("section-sub-header", label, BS_COL_LABELS.map(() => ({ text: "" }))));
+  }
+
+  const n = monthLabels.length;
+  const allCats = [...BS_CATEGORY_ORDER.assets, ...BS_CATEGORY_ORDER.liabilities, ...BS_CATEGORY_ORDER.equity];
+  const categoryData = {};
+  allCats.forEach(cat => { categoryData[cat] = buildBsCategory(cat, companies, currentMonthIdx); });
+
+  function addGroup(cats) {
+    let total = zeros(n);
+    cats.forEach(cat => {
+      const { rows, total: catTotal } = categoryData[cat];
+      addInto(total, catTotal);
+      const key = "bs_" + cat;
+      addLine(BS_CATEGORY_LABEL[cat], catTotal, key);
+      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values));
+    });
+    return total;
+  }
+
+  addSubHeader("Assets");
+  const totalAssets = addGroup(BS_CATEGORY_ORDER.assets);
+  addLine("Total Assets", totalAssets, null, "grandtotal");
+
+  addSubHeader("Liabilities");
+  const totalLiab = addGroup(BS_CATEGORY_ORDER.liabilities);
+  addLine("Total Liabilities", totalLiab, null, "summary-line");
+
+  addSubHeader("Equity");
+  const totalEquity = addGroup(BS_CATEGORY_ORDER.equity);
+
+  const totalLiabEquity = addSeries(totalLiab, totalEquity);
+  addLine("Total Liabilities & Equity", totalLiabEquity, null, "grandtotal");
+
+  table.appendChild(tbody);
+
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
+
+  const checkEl = document.getElementById("bsCheck");
+  const diff = totalAssets[currentMonthIdx] - totalLiabEquity[currentMonthIdx];
+  if (Math.abs(diff) < 1) {
+    checkEl.textContent = "✓ Balance sheet balances (Assets = Liabilities + Equity).";
+    checkEl.className = "balance-check ok";
+  } else {
+    checkEl.textContent = `⚠ Balance sheet is out of balance by ${fmtMoney(diff)} for ${entityDisplayName(entVal, companies)} — check source data.`;
+    checkEl.className = "balance-check warn";
+  }
+}
+
+// ---- Cash Flow tab: indirect method, same This Month/YTD/TTM period groups
+// as the P&L Statement so "total debt paid down during the period" reads
+// consistently with every other figure on the page. ----
+function renderCashFlow(entVal, companies) {
+  const cf = buildCashFlow(companies);
+
+  document.getElementById("cfSub").textContent =
+    `Indirect method — derived from month-over-month Balance Sheet changes plus Net Income. This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand loan/account detail.`;
+
+  renderDebtCard(cf, entVal, companies);
+
+  const table = document.getElementById("cfTable");
+  table.innerHTML = "";
+  table.appendChild(buildPeriodThead());
+
+  const tbody = document.createElement("tbody");
+  function addSummary(label, series, expandKey, rowClass) {
+    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false)));
+  }
+  function addDetail(label, series) {
+    tbody.appendChild(buildRow("detail", label, buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false)));
+  }
+  function addSubHeader(label) {
+    const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
+    tbody.appendChild(buildRow("section-sub-header", label, blanks));
+  }
+
+  addSubHeader("Operating Activities");
+  addSummary("Net Income", cf.netIncome, null);
+  cf.operating.forEach(c => {
+    const key = "cf_" + c.category;
+    addSummary(BS_CATEGORY_LABEL[c.category], c.total, key);
+    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
+  });
+  addSummary("Net Cash from Operating Activities", cf.operatingTotal, null, "grandtotal");
+
+  addSubHeader("Investing Activities");
+  cf.investing.forEach(c => {
+    const key = "cf_" + c.category;
+    addSummary(BS_CATEGORY_LABEL[c.category], c.total, key);
+    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
+  });
+  addSummary("Net Cash from Investing Activities", cf.investingTotal, null, "grandtotal");
+
+  addSubHeader("Financing Activities");
+  cf.financing.forEach(c => {
+    const key = "cf_" + c.category;
+    const label = c.category === "Non-current liabilities" ? "Debt Proceeds / (Payments)" : "Equity Contributions / (Distributions)";
+    addSummary(label, c.total, key);
+    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
+  });
+  addSummary("Net Cash from Financing Activities", cf.financingTotal, null, "grandtotal");
+
+  addSummary("Net Increase / (Decrease) in Cash", cf.netChange, null, "grandtotal");
+
+  table.appendChild(tbody);
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
+
+  // Reconciliation: Net Increase/(Decrease) in Cash should match the actual
+  // change in Bank Accounts balance for the same period — the safety net for
+  // any QBO plug or timing quirk the model's assumptions didn't anticipate.
+  const checkEl = document.getElementById("cfCheck");
+  const actualChange = currentMonthIdx >= 1 ? cf.cash[currentMonthIdx] - cf.cash[currentMonthIdx - 1] : null;
+  const modelChange = cf.netChange[currentMonthIdx];
+  const diff = actualChange != null ? modelChange - actualChange : null;
+  if (diff == null) {
+    checkEl.textContent = "";
+    checkEl.className = "balance-check";
+  } else if (Math.abs(diff) < 1) {
+    checkEl.textContent = `✓ Reconciles to the actual change in cash for ${months[currentMonthIdx].label} (${fmtMoney(actualChange)}).`;
+    checkEl.className = "balance-check ok";
+  } else {
+    checkEl.textContent = `⚠ Off by ${fmtMoney(diff)} vs. the actual change in cash for ${months[currentMonthIdx].label} (model: ${fmtMoney(modelChange)}, actual: ${fmtMoney(actualChange)}) — check source data.`;
+    checkEl.className = "balance-check warn";
+  }
+}
+
+function renderDebtCard(cf, entVal, companies) {
+  const card = document.getElementById("debtCard");
+  card.innerHTML = "";
+
+  const periods = [
+    { label: "This Month", range: [currentMonthIdx, currentMonthIdx] },
+    { label: "Year-to-Date", range: ytdRange(months[currentMonthIdx].year, months[currentMonthIdx].monthNum) },
+    { label: "Trailing 12 Months", range: ttmRange(currentMonthIdx) }
+  ];
+
+  const summaries = periods.map(p => ({ label: p.label, ...debtPaydownForPeriod(cf.financing, p.range) }));
+
+  summaries.forEach(s => {
+    const stat = document.createElement("div");
+    stat.className = "debt-stat";
+    stat.innerHTML = `<div class="card-title">${escapeHtml(s.label)}</div>` +
+      `<div class="card-value">${fmtMoney(s.paidDown)}</div>` +
+      `<div class="card-sub">paid down${s.newBorrowing > 0.5 ? " · " + fmtMoney(s.newBorrowing) + " new borrowing" : ""}</div>`;
+    card.appendChild(stat);
+  });
+
+  const toggle = document.createElement("div");
+  toggle.className = "debt-detail-toggle";
+  toggle.textContent = debtDetailOpen ? "▾ Hide loan detail" : "▸ Show loan detail";
+  toggle.addEventListener("click", () => { debtDetailOpen = !debtDetailOpen; render(); });
+  card.appendChild(toggle);
+
+  if (debtDetailOpen) {
+    const wrap = document.createElement("div");
+    wrap.className = "debt-detail-wrap";
+    // Union of every loan with activity in ANY of the 3 periods — a loan quiet
+    // this month but active in YTD/TTM still needs a row, just with "—" here.
+    const byAccount = new Map();
+    summaries.forEach((s, i) => {
+      s.perLoan.forEach(l => {
+        if (!byAccount.has(l.account)) byAccount.set(l.account, {});
+        byAccount.get(l.account)[i] = l;
+      });
+    });
+    if (!byAccount.size) {
+      wrap.innerHTML = `<div class="empty-note">No loan activity for ${entityDisplayName(entVal, companies)} in the periods shown.</div>`;
+    } else {
+      const accounts = [...byAccount.keys()].sort((a, b) => {
+        const ttmA = byAccount.get(a)[2], ttmB = byAccount.get(b)[2];
+        const magA = ttmA ? ttmA.paidDown + ttmA.newBorrowing : 0;
+        const magB = ttmB ? ttmB.paidDown + ttmB.newBorrowing : 0;
+        return magB - magA || a.localeCompare(b);
+      });
+      function periodCells(entry) {
+        const paid = entry && entry.paidDown > 0.5 ? fmtMoney(entry.paidDown) : "—";
+        const borrow = entry && entry.newBorrowing > 0.5 ? fmtMoney(entry.newBorrowing) : "—";
+        return { paid, borrow };
+      }
+      const rows = accounts.map(a => {
+        const rec = byAccount.get(a);
+        const p = [0, 1, 2].map(i => periodCells(rec[i]));
+        return `<tr><td>${escapeHtml(a)}</td>` +
+          `<td class="grp-start">${p[0].paid}</td><td>${p[0].borrow}</td>` +
+          `<td class="grp-start">${p[1].paid}</td><td>${p[1].borrow}</td>` +
+          `<td class="grp-start">${p[2].paid}</td><td>${p[2].borrow}</td></tr>`;
+      }).join("");
+      wrap.innerHTML = `<div class="section-sub">Per-loan activity across the same 3 periods shown above.</div>` +
+        `<table class="debt-detail-table"><thead>` +
+        `<tr><th></th><th class="grp-start" colspan="2">This Month</th><th class="grp-start" colspan="2">Year-to-Date</th><th class="grp-start" colspan="2">Trailing 12 Months</th></tr>` +
+        `<tr><th>Loan / Note</th><th class="grp-start">Paid Down</th><th>New Borrowing</th><th class="grp-start">Paid Down</th><th>New Borrowing</th><th class="grp-start">Paid Down</th><th>New Borrowing</th></tr>` +
+        `</thead><tbody>${rows}</tbody></table>`;
+    }
+    card.appendChild(wrap);
+  }
+}
+
+// Card order deliberately differs from the table's top-to-bottom P&L order:
+// 4 "flow" lines on top, then the 3 profitability "stops" (Gross Profit,
+// Operating Income, Net Income) on the bottom row — how this client trains
+// on reading a P&L.
+const CARD_ORDER = ["revenue", "cos", "expenses", "nonOperating", "grossProfit", "operatingIncome", "netIncome"];
+
+function renderCards(summaryLines) {
+  document.getElementById("trendSub").textContent =
+    `Trailing averages anchored on ${months[currentMonthIdx].label}. Arrows reflect whether the direction is favorable for that line.`;
+
+  const grid = document.getElementById("cardGrid");
+  grid.innerHTML = "";
+
+  const byKey = new Map(summaryLines.map(l => [l.key, l]));
+  CARD_ORDER.map(k => byKey.get(k)).forEach(line => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const current = line.series[currentMonthIdx];
+    const pctNow = line.pctOfRevenue.series[currentMonthIdx];
+    let html = `<div class="card-title">${escapeHtml(line.label)}</div>`;
+    html += `<div class="card-value${current < 0 ? " neg" : ""}">${fmtMoney(current)}</div>`;
+    html += `<div class="card-margin">% of Revenue: ${fmtPct(pctNow)}</div>`;
+    card.innerHTML = html;
+
+    const chipRow = document.createElement("div");
+    chipRow.className = "chip-row";
+    AVG_WINDOWS.forEach(w => {
+      const avg = trailingAverage(line.series, currentMonthIdx, w.months);
+      chipRow.appendChild(chipFor(w.label, avg, current, line.polarity, false));
+    });
+    card.appendChild(chipRow);
+
+    const pctLabelEl = document.createElement("div");
+    pctLabelEl.className = "chip-row-caption";
+    pctLabelEl.textContent = "% of Revenue vs. averages";
+    card.appendChild(pctLabelEl);
+
+    const pctChipRow = document.createElement("div");
+    pctChipRow.className = "chip-row";
+    AVG_WINDOWS.forEach(w => {
+      const avg = trailingAverageRatio(line.pctOfRevenue.num, line.pctOfRevenue.den, currentMonthIdx, w.months);
+      pctChipRow.appendChild(chipFor(w.label, avg, pctNow, line.polarity, true));
+    });
+    card.appendChild(pctChipRow);
+
+    const cmpWrap = document.createElement("div");
+    cmpWrap.className = "cmp-rows";
+    cmpWrap.appendChild(cmpRow("vs. Same Month, Prior Year", pyMonthCompare(line), line.polarity));
+    cmpWrap.appendChild(cmpRow("YTD vs. Prior-Year YTD", ytdCompare(line), line.polarity));
+    cmpWrap.appendChild(cmpRow("Trailing 12 Mo vs. Prior 12 Mo", ttmCompare(line), line.polarity));
+    card.appendChild(cmpWrap);
+
+    grid.appendChild(card);
+  });
+}
+
+function chipFor(label, avgValue, currentValue, polarity, isMargin) {
+  const chip = document.createElement("div");
+  if (avgValue == null || !isFinite(avgValue)) {
+    chip.className = "chip na";
+    chip.innerHTML = `<div class="chip-label">${label}</div><div class="chip-value">N/A</div>`;
+    return chip;
+  }
+  // Dollar comparisons treat sub-$0.50 differences as noise; fraction (margin %)
+  // comparisons need a much smaller epsilon since values are ~0-1, not ~0-1e6.
+  const arrow = arrowFor(currentValue, avgValue, polarity, isMargin ? 0.0005 : 0.5);
+  chip.className = "chip";
+  chip.innerHTML = `<div class="chip-label">${label}</div>` +
+    `<div class="chip-value">${isMargin ? fmtPct(avgValue) : fmtMoney(avgValue)} ` +
+    `<span class="arrow-${arrow.cls}">${arrow.symbol}</span></div>`;
+  return chip;
+}
+
+// Period comparisons always compare the line's dollar series — a line having
+// an associated margin % (Gross/Operating/Net) doesn't change what its own
+// period-over-period comparison means.
+function pyMonthCompare(line) {
+  const idx = currentMonthIdx, pyIdx = idx - 12;
+  if (pyIdx < 0) return null;
+  return { current: line.series[idx], prior: line.series[pyIdx] };
+}
+
+function ytdCompare(line) {
+  const idx = currentMonthIdx;
+  const y = months[idx].year, m = months[idx].monthNum;
+  const cur = ytdRange(y, m), pri = ytdRange(y - 1, m);
+  if (!cur || !pri) return null;
+  return { current: sumRange(line.series, cur[0], cur[1]), prior: sumRange(line.series, pri[0], pri[1]) };
+}
+
+function ttmCompare(line) {
+  const idx = currentMonthIdx;
+  const cur = ttmRange(idx), pri = priorTtmRange(idx);
+  if (!cur || !pri) return null;
+  return { current: sumRange(line.series, cur[0], cur[1]), prior: sumRange(line.series, pri[0], pri[1]) };
+}
+
+function cmpRow(label, data, polarity) {
+  const row = document.createElement("div");
+  row.className = "cmp-row";
+  if (!data || data.current == null || data.prior == null) {
+    row.innerHTML = `<span class="cmp-label">${label}</span><span class="cmp-na">Not enough history</span>`;
+    return row;
+  }
+  const arrow = arrowFor(data.current, data.prior, polarity || "pos");
+  const delta = pctChange(data.current, data.prior);
+  const deltaStr = delta == null ? "—" : fmtPct(delta);
+  row.innerHTML = `<span class="cmp-label">${label}</span>` +
+    `<span class="cmp-value arrow-${arrow.cls}">${deltaStr} <span class="arrow-${arrow.cls}">${arrow.symbol}</span></span>`;
+  return row;
+}
+
+// ---- Changes Analysis tab ----
+// Hand-authored commentary, manually refreshed by Claude on request (see
+// .claude/compute-variances.js). Keyed by "<entityValue>|<month label>" so a
+// new entry can be added for any entity/month combination without code
+// changes. Months/entities without an entry show a clear placeholder.
+// Reset empty for the MSS + Personal dataset — prior entries here were
+// written against the old Mohave 9-entity data and don't apply.
+const ANALYSIS_DATA = {
+};
+
+// Who is viewing this report right now. There's no real login system yet —
+// this is a placeholder so the hide/show visibility split is already wired
+// up and only needs a real value plugged in once authentication exists.
+// "team" sees hidden findings (dimmed, with an Unhide control); "client"
+// would never receive them in the DOM at all.
+const CURRENT_ROLE = "team"; // "team" | "client"
+
+// Hidden-finding state persists in this browser's localStorage, keyed per
+// entity/month/finding so archived months keep whatever was hidden for them.
+// This does NOT yet sync across devices or actually block a client from
+// seeing a hidden item on their own browser — that requires real
+// authentication, which doesn't exist yet. Swap this storage layer for a
+// synced backend later without touching the rendering logic below.
+function loadHiddenFindings() {
+  try { return JSON.parse(localStorage.getItem("hiddenFindings") || "{}"); }
+  catch { return {}; }
+}
+function setFindingHidden(findingKey, hidden) {
+  const all = loadHiddenFindings();
+  if (hidden) all[findingKey] = true; else delete all[findingKey];
+  localStorage.setItem("hiddenFindings", JSON.stringify(all));
+}
+
+function renderAnalysis(entVal, companies) {
+  document.getElementById("analysisSub").textContent =
+    "Hand-written commentary on the accounts that moved most, using whichever comparison — vs. prior year, YTD, or trailing average — is most telling for that account.";
+
+  const analysisKey = entVal + "|" + months[currentMonthIdx].label;
+  const data = ANALYSIS_DATA[analysisKey];
+  const emptyEl = document.getElementById("analysisEmpty");
+  const bodyEl = document.getElementById("analysisBody");
+
+  if (!data) {
+    emptyEl.style.display = "";
+    bodyEl.style.display = "none";
+    return;
+  }
+  emptyEl.style.display = "none";
+  bodyEl.style.display = "";
+
+  document.getElementById("analysisSummary").textContent = data.summary;
+  document.getElementById("analysisMeta").textContent =
+    `${entityDisplayName(entVal, companies)} · ${months[currentMonthIdx].label} · Written ${data.generatedAt}`;
+
+  const hiddenFindings = loadHiddenFindings();
+
+  function renderList(containerId, list, direction) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+    list.forEach(item => {
+      const findingKey = analysisKey + "|" + direction + "|" + item.account;
+      const isHidden = !!hiddenFindings[findingKey];
+
+      if (isHidden && CURRENT_ROLE === "client") return; // never reaches the client's DOM
+
+      const div = document.createElement("div");
+      div.className = "analysis-item" + (isHidden ? " hidden-finding" : "");
+
+      const head = document.createElement("div");
+      head.className = "ai-head";
+      const acctName = document.createElement("span");
+      acctName.className = "ai-account";
+      acctName.textContent = item.account;
+      const badge = document.createElement("span");
+      badge.className = "ai-badge";
+      badge.textContent = item.section;
+      head.appendChild(acctName);
+      head.appendChild(badge);
+
+      const hideBtn = document.createElement("button");
+      hideBtn.type = "button";
+      hideBtn.className = "ai-hide-btn";
+      hideBtn.textContent = isHidden ? "Unhide" : "Hide";
+      hideBtn.addEventListener("click", () => {
+        setFindingHidden(findingKey, !isHidden);
+        renderAnalysis(entVal, companies);
+      });
+      head.appendChild(hideBtn);
+
+      const figures = document.createElement("div");
+      figures.className = "ai-figures";
+      figures.textContent = item.figures;
+
+      const note = document.createElement("div");
+      note.className = "ai-note";
+      note.textContent = item.note;
+
+      div.appendChild(head);
+      div.appendChild(figures);
+      div.appendChild(note);
+      container.appendChild(div);
+    });
+  }
+  renderList("analysisPositive", data.positives, "positive");
+  renderList("analysisNegative", data.negatives, "negative");
+}
+
+// ---- Account Trends tab ----
+
+function buildAccountSeries(sectionKey, account, companies) {
+  const n = monthLabels.length;
+  const values = zeros(n);
+  for (const rec of records) {
+    if (rec.section !== sectionKey || rec.standardAccount !== account) continue;
+    if (!companies.includes(rec.company)) continue;
+    addInto(values, rec.values);
+  }
+  return values;
+}
+
+function populateAccountDropdown(companies) {
+  const sel = document.getElementById("chartAccountSelect");
+  const prevValue = sel.value;
+  const bySection = new Map();
+  for (const rec of records) {
+    if (!companies.includes(rec.company)) continue;
+    if (!bySection.has(rec.section)) bySection.set(rec.section, new Set());
+    bySection.get(rec.section).add(rec.standardAccount);
+  }
+  sel.innerHTML = "";
+  SECTION_KEYS.forEach(sectionKey => {
+    const accounts = bySection.get(sectionKey);
+    if (!accounts || !accounts.size) return;
+    const group = document.createElement("optgroup");
+    group.label = sectionKey;
+    [...accounts].sort((a, b) => a.localeCompare(b)).forEach(acct => {
+      group.appendChild(new Option(acct, sectionKey + "" + acct));
+    });
+    sel.appendChild(group);
+  });
+  if (prevValue && [...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
+  else if (sel.options.length) sel.selectedIndex = 0;
+}
+
+function renderCharts(companies, revenue) {
+  const sel = document.getElementById("chartAccountSelect");
+  populateAccountDropdown(companies);
+  const val = sel.value;
+  const emptyEl = document.getElementById("chartsEmpty");
+  const contentEl = document.getElementById("chartsContent");
+
+  if (!val) {
+    emptyEl.style.display = "";
+    contentEl.style.display = "none";
+    return;
+  }
+  emptyEl.style.display = "none";
+  contentEl.style.display = "";
+
+  const [sectionKey, account] = val.split("");
+  const series = buildAccountSeries(sectionKey, account, companies);
+  const pctSeries = divSeries(series, revenue);
+
+  const endIdx = currentMonthIdx;
+  const startIdx = Math.max(0, endIdx - 24);
+  const idxRange = [];
+  for (let i = startIdx; i <= endIdx; i++) idxRange.push(i);
+
+  const dollarPoints = idxRange.map(i => ({ label: months[i].label, value: series[i] }));
+  const pctPoints = idxRange.map(i => ({ label: months[i].label, value: pctSeries[i] }));
+
+  document.getElementById("chartsHeading").textContent =
+    `${account} — ${sectionKey} · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
+    `${dollarPoints.length}-month window ending ${months[endIdx].label}`;
+
+  const polarity = SECTION_POLARITY[sectionKey] || "pos";
+  renderChartAvgChips("chartDollarAvgRow", series, null, endIdx, polarity, false);
+  renderChartAvgChips("chartPctAvgRow", series, revenue, endIdx, polarity, true);
+
+  renderLineChart(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), dollarPoints, { isPct: false });
+  renderLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), pctPoints, { isPct: true });
+}
+
+// Trailing 3/6/12-mo and 3/5-yr averages for the selected account, same
+// AVG_WINDOWS/trailingAverage helpers the summary cards use, reused here.
+function renderChartAvgChips(containerId, series, denSeries, endIdx, polarity, isPct) {
+  const row = document.getElementById(containerId);
+  row.innerHTML = "";
+  const current = isPct ? (denSeries[endIdx] ? series[endIdx] / denSeries[endIdx] : null) : series[endIdx];
+  AVG_WINDOWS.forEach(w => {
+    const avg = isPct
+      ? trailingAverageRatio(series, denSeries, endIdx, w.months)
+      : trailingAverage(series, endIdx, w.months);
+    row.appendChild(chipFor(w.label, avg, current, polarity, isPct));
+  });
+}
+
+function niceStep(rawStep) {
+  if (rawStep <= 0) return 1;
+  const exp = Math.floor(Math.log10(rawStep));
+  const base = rawStep / Math.pow(10, exp);
+  let niceBase;
+  if (base <= 1) niceBase = 1;
+  else if (base <= 2) niceBase = 2;
+  else if (base <= 5) niceBase = 5;
+  else niceBase = 10;
+  return niceBase * Math.pow(10, exp);
+}
+
+function buildNiceTicks(min, max, targetCount) {
+  if (min === max) { min -= 1; max += 1; }
+  const rawStep = (max - min) / targetCount;
+  const step = niceStep(rawStep);
+  const niceMin = Math.floor(min / step) * step;
+  const niceMax = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = niceMin; v <= niceMax + step * 0.001; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return { min: niceMin, max: niceMax, ticks };
+}
+
+// Hand-rolled inline SVG line chart — kept dependency-free to match the rest
+// of this file (no CDN). Single series, so no legend (per dataviz guidance);
+// crosshair + snapping tooltip on hover, values formatted the same way as
+// the rest of the report.
+function renderLineChart(svg, tooltip, points, opts) {
+  const isPct = !!opts.isPct;
+  const fmt = isPct ? fmtPct : fmtMoney;
+  const W = 860, H = 138;
+  const padL = 68, padR = 54, padT = 16, padB = 42;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const NS = "http://www.w3.org/2000/svg";
+
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = "";
+  tooltip.style.display = "none";
+
+  if (!points.length) return;
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function textEl(x, y, str, attrs) {
+    const t = el("text", Object.assign({ x, y }, attrs));
+    t.textContent = str;
+    return t;
+  }
+
+  const values = points.map(p => (p.value == null ? 0 : p.value));
+  const rawMin = Math.min(0, ...values);
+  const rawMax = Math.max(0, ...values);
+  const { min: domMin, max: domMax, ticks } = buildNiceTicks(rawMin, rawMax, 4);
+  const domSpan = (domMax - domMin) || 1;
+  const n = points.length;
+
+  const xAt = i => padL + (n === 1 ? chartW / 2 : (chartW * i) / (n - 1));
+  const yAt = v => padT + chartH - ((v - domMin) / domSpan) * chartH;
+
+  ticks.forEach(v => {
+    const y = yAt(v);
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+  });
+  if (domMin < 0 && domMax > 0) {
+    const y0 = yAt(0);
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
+  }
+
+  points.forEach((p, i) => {
+    const x = xAt(i);
+    svg.appendChild(el("line", { x1: x, x2: x, y1: padT + chartH, y2: padT + chartH + 4, stroke: "#b9c2cc", "stroke-width": 1 }));
+    svg.appendChild(textEl(x, padT + chartH + 14, p.label, {
+      "text-anchor": "end", "font-size": "9", fill: "#6b7684",
+      transform: `rotate(-60 ${x} ${padT + chartH + 14})`
+    }));
+  });
+
+  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${xAt(i)},${yAt(values[i])}`).join(" ");
+  svg.appendChild(el("path", { d, fill: "none", stroke: "#1a73e8", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+  // Per-point markers + value labels (smaller font than the end-point label below).
+  points.forEach((p, i) => {
+    if (i === n - 1) return;
+    const x = xAt(i), y = yAt(values[i]);
+    svg.appendChild(el("circle", { cx: x, cy: y, r: 2.5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 1 }));
+    const labelY = Math.max(padT + 6, y - 7);
+    svg.appendChild(textEl(x, labelY, fmt(values[i]), { "text-anchor": "middle", "font-size": "6.5", fill: "#6b7684" }));
+  });
+
+  const lastX = xAt(n - 1), lastY = yAt(values[n - 1]);
+  svg.appendChild(el("circle", { cx: lastX, cy: lastY, r: 5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 2 }));
+  svg.appendChild(textEl(lastX + 8, lastY + 4, fmt(values[n - 1]), { "font-size": "11", fill: "#1c2733", "font-weight": "700" }));
+
+  const crosshair = el("line", { x1: 0, x2: 0, y1: padT, y2: padT + chartH, stroke: "#1a73e8", "stroke-width": 1, "stroke-dasharray": "3,3", visibility: "hidden" });
+  svg.appendChild(crosshair);
+  const hoverDot = el("circle", { r: 5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 2, visibility: "hidden" });
+  svg.appendChild(hoverDot);
+
+  const overlay = el("rect", { x: padL, y: padT, width: chartW, height: chartH, fill: "transparent" });
+  svg.appendChild(overlay);
+
+  overlay.addEventListener("pointermove", evt => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const mouseX = (evt.clientX - rect.left) * scaleX;
+    let idx = Math.round(((mouseX - padL) / chartW) * (n - 1));
+    idx = Math.max(0, Math.min(n - 1, idx));
+    const x = xAt(idx), y = yAt(values[idx]);
+
+    crosshair.setAttribute("x1", x); crosshair.setAttribute("x2", x);
+    crosshair.setAttribute("visibility", "visible");
+    hoverDot.setAttribute("cx", x); hoverDot.setAttribute("cy", y);
+    hoverDot.setAttribute("visibility", "visible");
+
+    tooltip.style.display = "block";
+    tooltip.innerHTML = "";
+    const valEl = document.createElement("div");
+    valEl.className = "chart-tooltip-value";
+    valEl.textContent = fmt(values[idx]);
+    const lblEl = document.createElement("div");
+    lblEl.className = "chart-tooltip-label";
+    lblEl.textContent = points[idx].label;
+    tooltip.appendChild(valEl);
+    tooltip.appendChild(lblEl);
+
+    const px = (x / W) * rect.width;
+    const py = (y / H) * rect.height;
+    let left = px + 12, top = py - 36;
+    if (left + 120 > rect.width) left = px - 132;
+    tooltip.style.left = Math.max(0, left) + "px";
+    tooltip.style.top = Math.max(0, top) + "px";
+  });
+  overlay.addEventListener("pointerleave", () => {
+    crosshair.setAttribute("visibility", "hidden");
+    hoverDot.setAttribute("visibility", "hidden");
+    tooltip.style.display = "none";
+  });
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    const name = btn.dataset.tab;
+    document.getElementById("panel-statement").hidden = name !== "statement";
+    document.getElementById("panel-analysis").hidden = name !== "analysis";
+    document.getElementById("panel-charts").hidden = name !== "charts";
+    document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
+    document.getElementById("panel-cashflow").hidden = name !== "cashflow";
+  });
+});
+
+document.getElementById("entitySelect").addEventListener("change", render);
+document.getElementById("monthSelect").addEventListener("change", render);
+document.getElementById("chartAccountSelect").addEventListener("change", render);
+document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
+  r.addEventListener("change", () => {
+    scaleMode = document.querySelector('input[name="scaleMode"]:checked').value;
+    render();
+  });
+});
+document.getElementById("refreshBtn").addEventListener("click", loadData);
+
+loadData();
+</script>
+
+</body>
+</html>
