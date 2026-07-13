@@ -77,6 +77,7 @@
   #status.error { color: var(--bad); background: #fdecea; }
   #entityFlag { padding: 8px 28px; font-size: 12.5px; background: #fff8e1; color: #7a5b00; border-bottom: 1px solid var(--border); display: none; }
   #entityFlag.show { display: block; }
+  #bizlinesFlag { padding: 8px 12px; font-size: 12.5px; background: #fff8e1; color: #7a5b00; border-radius: 6px; margin: 10px 0; }
 
   main { padding: 20px 28px 48px; display: flex; flex-direction: column; gap: 26px; }
 
@@ -288,6 +289,7 @@
   <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
+  <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
 </nav>
 
 <div id="status">Loading…</div>
@@ -398,6 +400,19 @@
       <div class="section-sub" id="cfSub"></div>
       <div class="table-wrap"><table id="cfTable"></table></div>
       <div id="cfCheck" class="balance-check"></div>
+    </section>
+  </div>
+
+  <div id="panel-bizlines" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Business Lines</h2>
+      <div class="section-sub" id="bizlinesSub"></div>
+      <div class="inline-control">
+        <label for="bizlineSelect">Business Line</label>
+        <select id="bizlineSelect"></select>
+      </div>
+      <div id="bizlinesFlag" style="display:none;"></div>
+      <div class="table-wrap"><table id="bizlinesTable"></table></div>
     </section>
   </div>
 </main>
@@ -730,6 +745,153 @@ function buildSection(sectionKey, companies, endIdx) {
   return { rows, total };
 }
 
+// ---- Business Lines tab: revenue-source view (CFO Consulting / Music /
+// Company Vitals K1), independent of the P&L Statement's QBO-section view.
+// Mapping is hand-maintained since "Standard Account" names don't carry a
+// business-line tag in the source data. Royalties accounts from either file
+// go to Music per the original scoping decision; K1/profit-sharing income
+// from Company Vitals stays its own line rather than folding into either.
+// Anything in Income/Cost of Goods Sold NOT listed here shows up in the
+// in-tab "not yet assigned" flag instead of silently vanishing or being
+// guessed into the wrong line — see Claude if that list needs sorting out.
+const BUSINESS_LINE_ACCOUNTS = {
+  "CFO Consulting": {
+    income: ["40100 CFO Services", "CFO Services (Coaching)", "CFO Services (Monthly)", "CFO Services (Projects)", "CFO Services (Technology)"],
+    cos: ["50100 CFO Cost of Sales", "CFO Costs (General Expenses)", "CFO Costs (Team & Technology)", "CFO Costs (Travel)"]
+  },
+  "Music": {
+    income: ["40200 Music Revenue", "Music Royalties", "Royalties", "YouTube Revenue", "Performance and Speaking Fees",
+      "Product Sales at Events", "Print on Demand Clothing", "Shipping Revenue", "Website Revenue"],
+    cos: ["50200 Music Cost of Sales", "Cost of Sales-Royalties to DB", "Concerts and Performances", "Recording and Studio",
+      "Print on Demand (COS)", "Inbound and Outbound Shipping", "Shipping Supplies", "Postage Expense", "Website Cost of Goods Sold"]
+  },
+  "Company Vitals (K1)": {
+    income: ["K1 Income - Company Vitals", "Profit Sharing (Company Vitals)"],
+    cos: []
+  }
+};
+const BUSINESS_LINE_ORDER = ["CFO Consulting", "Music", "Company Vitals (K1)"];
+
+// Same shape as buildSection, but the account membership is an explicit list
+// (a business line) rather than a QBO section.
+function buildBusinessLineGroup(accountNames, companies, endIdx) {
+  const groups = new Map();
+  const n = monthLabels.length;
+  for (const rec of records) {
+    if (!accountNames.includes(rec.standardAccount)) continue;
+    if (!companies.includes(rec.company)) continue;
+    if (!groups.has(rec.standardAccount)) groups.set(rec.standardAccount, zeros(n));
+    addInto(groups.get(rec.standardAccount), rec.values);
+  }
+  const total = zeros(n);
+  const rows = [];
+  for (const [account, values] of groups.entries()) {
+    addInto(total, values);
+    if (!hasRecentActivity(values, endIdx)) continue;
+    rows.push({ account, values });
+  }
+  rows.sort((a, b) => a.account.localeCompare(b.account));
+  return { rows, total };
+}
+
+function renderBusinessLines(companies) {
+  const sel = document.getElementById("bizlineSelect");
+  if (!sel.options.length) {
+    sel.appendChild(new Option(`Consolidated (${BUSINESS_LINE_ORDER.length} Business Lines)`, "__ALL__"));
+    BUSINESS_LINE_ORDER.forEach(name => sel.appendChild(new Option(name, name)));
+  }
+  const bizVal = sel.value || "__ALL__";
+  const activeLines = bizVal === "__ALL__" ? BUSINESS_LINE_ORDER : [bizVal];
+
+  const n = monthLabels.length;
+  if (!n) return;
+
+  const incomeAccounts = [], cosAccounts = [];
+  activeLines.forEach(name => {
+    incomeAccounts.push(...BUSINESS_LINE_ACCOUNTS[name].income);
+    cosAccounts.push(...BUSINESS_LINE_ACCOUNTS[name].cos);
+  });
+
+  const incomeGroup = buildBusinessLineGroup(incomeAccounts, companies, currentMonthIdx);
+  const cosGroup = buildBusinessLineGroup(cosAccounts, companies, currentMonthIdx);
+  const revenue = incomeGroup.total;
+  const cos = cosGroup.total;
+  const grossProfit = subSeries(revenue, cos);
+
+  const lines = [
+    { key: "bizRevenue", label: "Revenue", series: revenue, polarity: "pos", expandRows: incomeGroup.rows },
+    { key: "bizCos", label: "Cost of Sales", series: cos, polarity: "neg", expandRows: cosGroup.rows },
+    { key: "bizGrossProfit", label: "Gross Profit", series: grossProfit, polarity: "pos", expandRows: null }
+  ];
+  lines.forEach(line => {
+    line.pctOfRevenue = { series: divSeries(line.series, revenue), num: line.series, den: revenue };
+  });
+
+  // Flag Income/COS accounts not assigned to any business line, so real
+  // dollars never just silently disappear from this view.
+  const allBizAccounts = new Set();
+  BUSINESS_LINE_ORDER.forEach(name => {
+    BUSINESS_LINE_ACCOUNTS[name].income.forEach(a => allBizAccounts.add(a));
+    BUSINESS_LINE_ACCOUNTS[name].cos.forEach(a => allBizAccounts.add(a));
+  });
+  let unclassifiedTotal = 0;
+  const unclassifiedAccounts = new Set();
+  for (const rec of records) {
+    if (rec.section !== "Income" && rec.section !== "Cost of Goods Sold") continue;
+    if (!companies.includes(rec.company)) continue;
+    if (allBizAccounts.has(rec.standardAccount)) continue;
+    unclassifiedTotal += rec.values[currentMonthIdx] || 0;
+    unclassifiedAccounts.add(rec.standardAccount);
+  }
+  const flagEl = document.getElementById("bizlinesFlag");
+  if (unclassifiedAccounts.size) {
+    flagEl.style.display = "";
+    flagEl.textContent = `${unclassifiedAccounts.size} Income/Cost of Sales account${unclassifiedAccounts.size === 1 ? "" : "s"} ` +
+      `not yet assigned to a business line (this month: ${fmtMoney(unclassifiedTotal)}, not included above): ` +
+      [...unclassifiedAccounts].sort().join(", ");
+  } else {
+    flagEl.style.display = "none";
+  }
+
+  document.getElementById("bizlinesSub").textContent =
+    `This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail.`;
+
+  const table = document.getElementById("bizlinesTable");
+  table.innerHTML = "";
+  table.appendChild(buildPeriodThead());
+  const tbody = document.createElement("tbody");
+
+  function addSummaryRow(label, series, polarity, expandKey) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells));
+  }
+  function addPctRow(pctOfRevenue, polarity) {
+    const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
+    tbody.appendChild(buildRow("margin-line", "% of Revenue", cells));
+  }
+  function addDetailRow(label, series, polarity) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+    tbody.appendChild(buildRow("detail", label, cells));
+  }
+
+  lines.forEach(line => {
+    addSummaryRow(line.label, line.series, line.polarity, line.expandRows ? line.key : null);
+    addPctRow(line.pctOfRevenue, line.polarity);
+    if (line.expandRows && expandedKeys.has(line.key)) {
+      line.expandRows.forEach(r => addDetailRow(r.account, r.values, line.polarity));
+    }
+  });
+
+  table.appendChild(tbody);
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      renderBusinessLines(companies);
+    });
+  });
+}
+
 // Same shape as buildSection but keyed by BS Category rather than P&L Section.
 function buildBsCategory(category, companies, endIdx) {
   const groups = new Map();
@@ -1009,6 +1171,7 @@ function render() {
   renderCharts(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
+  renderBusinessLines(companies);
 
   document.getElementById("footerNote").textContent =
     `Showing ${entVal === "__CONSOLIDATED__" ? "Consolidated (" + companies.length + " entities)" : entVal} · ` +
@@ -2107,6 +2270,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-charts").hidden = name !== "charts";
     document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
     document.getElementById("panel-cashflow").hidden = name !== "cashflow";
+    document.getElementById("panel-bizlines").hidden = name !== "bizlines";
   });
 });
 
@@ -2115,6 +2279,7 @@ document.getElementById("regenerateAnalysisBtn").addEventListener("click", gener
 document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
+document.getElementById("bizlineSelect").addEventListener("change", render);
 document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
   r.addEventListener("change", () => {
     scaleMode = document.querySelector('input[name="scaleMode"]:checked').value;
