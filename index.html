@@ -313,6 +313,7 @@
     <section>
       <h2 class="section-title">Changes Analysis</h2>
       <div class="section-sub" id="analysisSub"></div>
+      <div id="analysisError" style="display:none; color:var(--bad); font-size:12.5px; margin-bottom:10px;"></div>
       <div id="analysisEmpty" class="analysis-empty" style="display:none;">
         <div class="ae-icon">✎</div>
         <div>No analysis yet for this entity/month.</div>
@@ -548,6 +549,7 @@ async function loadData() {
   const btn = document.getElementById("refreshBtn");
   btn.disabled = true;
   setStatus("Loading live data from Google Sheets…");
+  fetchAllAnalysis().then(render).catch(() => {}); // in parallel; re-renders once the shared history arrives
   try {
     const [plText, bsText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -1540,10 +1542,10 @@ function cmpRow(label, data, polarity) {
 //  1. ANALYSIS_DATA (below) — optional hand-authored commentary Claude can
 //     bake into the file directly (see .claude/compute-variances.js for the
 //     same ranking math run standalone). Rarely used now that (2) exists.
-//  2. localStorage, written by the in-report "Generate/Regenerate Analysis"
-//     buttons (computeChangesAnalysis()) — self-serve, no Claude needed.
-//     NOTE: this only persists in the browser it was generated in; it does
-//     not sync across devices (same caveat as hiddenFindings below).
+//  2. /api/analysis (Vercel serverless function backed by Upstash Redis),
+//     written by the in-report "Generate/Regenerate Analysis" buttons
+//     (computeChangesAnalysis()) — self-serve, no Claude needed, and shared
+//     across every browser/device since it lives server-side.
 // Both are keyed by "<entityValue>|<month label>", each mapping to an ARRAY
 // of versions, newest first — regenerating prepends rather than overwrites,
 // which is what powers the "Version" dropdown and historical runs. Each
@@ -1551,12 +1553,37 @@ function cmpRow(label, data, polarity) {
 const ANALYSIS_DATA = {
 };
 
-function loadGeneratedAnalysis() {
-  try { return JSON.parse(localStorage.getItem("generatedAnalysis") || "{}"); }
-  catch { return {}; }
+// In-memory cache of the server's whole analysis dataset (all entities/
+// months at once — small enough to just keep around). renderAnalysis reads
+// this synchronously; fetchAllAnalysis() refreshes it and re-renders.
+let remoteAnalysisCache = {};
+let remoteAnalysisLoaded = false;
+
+async function fetchAllAnalysis() {
+  try {
+    const resp = await fetch("/api/analysis", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    remoteAnalysisCache = await resp.json();
+  } catch (err) {
+    console.warn("Couldn't load shared analysis history: " + err.message);
+    remoteAnalysisCache = {};
+  }
+  remoteAnalysisLoaded = true;
 }
-function saveGeneratedAnalysis(all) {
-  localStorage.setItem("generatedAnalysis", JSON.stringify(all));
+
+// Posts one new version for a key and updates the cache from the server's
+// response (which is the full, authoritative dataset after the write).
+async function postAnalysisVersion(key, version) {
+  const resp = await fetch("/api/analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, version })
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.error || ("HTTP " + resp.status));
+  }
+  remoteAnalysisCache = await resp.json();
 }
 
 // Ports the same "most telling comparison" ranking algorithm as
@@ -1642,17 +1669,29 @@ function computeChangesAnalysis(companies, endIdx, entVal) {
   };
 }
 
-function generateAnalysisForCurrent() {
+async function generateAnalysisForCurrent() {
   const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const analysisKey = entVal + "|" + months[currentMonthIdx].label;
   const version = computeChangesAnalysis(companies, currentMonthIdx, entVal);
-  const all = loadGeneratedAnalysis();
-  if (!all[analysisKey]) all[analysisKey] = [];
-  all[analysisKey].unshift(version);
-  saveGeneratedAnalysis(all);
-  analysisVersionSelection[analysisKey] = 0; // jump to the version just generated
-  renderAnalysis(entVal, companies);
+
+  const genBtn = document.getElementById("generateAnalysisBtn");
+  const regenBtn = document.getElementById("regenerateAnalysisBtn");
+  const errEl = document.getElementById("analysisError");
+  genBtn.disabled = true;
+  regenBtn.disabled = true;
+  errEl.style.display = "none";
+  try {
+    await postAnalysisVersion(analysisKey, version);
+    analysisVersionSelection[analysisKey] = 0; // jump to the version just generated
+    renderAnalysis(entVal, companies);
+  } catch (err) {
+    errEl.textContent = "Couldn't save analysis: " + err.message;
+    errEl.style.display = "";
+  } finally {
+    genBtn.disabled = false;
+    regenBtn.disabled = false;
+  }
 }
 
 // Which version is currently selected per analysisKey (defaults to 0 =
@@ -1684,16 +1723,24 @@ function setFindingHidden(findingKey, hidden) {
 }
 
 function renderAnalysis(entVal, companies) {
-  document.getElementById("analysisSub").textContent =
-    "Hand-written commentary on the accounts that moved most, using whichever comparison — vs. prior year, YTD, or trailing average — is most telling for that account.";
-
-  const analysisKey = entVal + "|" + months[currentMonthIdx].label;
-  const generatedForKey = loadGeneratedAnalysis()[analysisKey] || [];
-  const versions = [...generatedForKey, ...(ANALYSIS_DATA[analysisKey] || [])];
   const emptyEl = document.getElementById("analysisEmpty");
   const bodyEl = document.getElementById("analysisBody");
   const versionControl = document.getElementById("analysisVersionControl");
   const versionSelect = document.getElementById("analysisVersionSelect");
+
+  if (!remoteAnalysisLoaded) {
+    document.getElementById("analysisSub").textContent = "Loading analysis history…";
+    emptyEl.style.display = "none";
+    bodyEl.style.display = "none";
+    versionControl.style.display = "none";
+    return;
+  }
+  document.getElementById("analysisSub").textContent =
+    "Hand-written commentary on the accounts that moved most, using whichever comparison — vs. prior year, YTD, or trailing average — is most telling for that account.";
+
+  const analysisKey = entVal + "|" + months[currentMonthIdx].label;
+  const generatedForKey = remoteAnalysisCache[analysisKey] || [];
+  const versions = [...generatedForKey, ...(ANALYSIS_DATA[analysisKey] || [])];
 
   if (!versions || !versions.length) {
     emptyEl.style.display = "";
