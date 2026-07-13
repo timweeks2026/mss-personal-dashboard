@@ -964,7 +964,13 @@ function render() {
 
   const n = monthLabels.length;
   if (!n) {
-    document.getElementById("plTable").parentElement.innerHTML = '<div class="empty-note">No data available.</div>';
+    // Data hasn't loaded yet (or failed to). Leave #plTable itself intact —
+    // replacing its parent's innerHTML would permanently detach it from the
+    // DOM, breaking every later render() call for the rest of the page's
+    // life (this used to happen on a race: the analysis-history fetch tends
+    // to resolve faster than the Google Sheets CSV fetch, so render() could
+    // get called once before the CSV data was ready).
+    document.getElementById("plTable").innerHTML = '';
     return;
   }
 
