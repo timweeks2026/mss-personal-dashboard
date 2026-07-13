@@ -1610,16 +1610,19 @@ function computeChangesAnalysis(companies, endIdx, entVal) {
     }
     const polarity = SECTION_POLARITY[sectionKey] || "pos";
     for (const [account, values] of groups.entries()) {
+      // Deliberately just this month vs. same month last year, and YTD vs.
+      // prior-year YTD — this is a monthly Changes Analysis, not a trailing-
+      // window one. TTM and trailing-average bases used to also compete here
+      // and could win on raw $ size, surfacing numbers that looked like "this
+      // month" but were really a 12-month sum (or worse, a stale account with
+      // no current activity showing a large historical comparison figure —
+      // e.g. a sold property's TTM still including months before the sale).
       const mPair = monthPair(values, endIdx);
       const yPair = ytdPair(values, endIdx);
-      const tPair = ttmPair(values, endIdx);
-      const aPair = { current: values[endIdx], prior: trailingAverage(values, endIdx, 12) };
 
       const candidates = [
         { basis: "vs. same month last year", pair: mPair },
-        { basis: "YTD vs. prior-year YTD", pair: yPair },
-        { basis: "TTM vs. prior 12 months", pair: tPair },
-        { basis: "vs. its trailing 12-mo average", pair: aPair }
+        { basis: "YTD vs. prior-year YTD", pair: yPair }
       ].filter(c => c.pair.current != null && c.pair.prior != null);
       if (!candidates.length) continue;
 
