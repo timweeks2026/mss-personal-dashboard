@@ -55,6 +55,17 @@
   button#refreshBtn:hover { background: #1d4670; }
   button#refreshBtn:disabled { opacity: 0.6; cursor: default; }
 
+  .btn-primary {
+    font-size: 13px; padding: 8px 14px; border-radius: 6px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer;
+  }
+  .btn-primary:hover { background: #1557b0; }
+  .btn-secondary {
+    font-size: 12px; padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer;
+  }
+  .btn-secondary:hover { background: #f1f4f8; }
+
   .radio-group { display: flex; gap: 12px; }
   .radio-group label {
     display: flex; align-items: center; gap: 5px; font-size: 13px; color: #fff;
@@ -304,9 +315,17 @@
       <div class="section-sub" id="analysisSub"></div>
       <div id="analysisEmpty" class="analysis-empty" style="display:none;">
         <div class="ae-icon">✎</div>
-        <div>Not yet analyzed for this entity/month — ask Claude to run this month.</div>
+        <div>No analysis yet for this entity/month.</div>
+        <button type="button" id="generateAnalysisBtn" class="btn-primary" style="margin-top:12px;">Generate Analysis</button>
       </div>
       <div id="analysisBody" style="display:none;">
+        <div class="inline-control" style="display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap;">
+          <div id="analysisVersionControl" style="display:none;">
+            <label for="analysisVersionSelect">Version</label>
+            <select id="analysisVersionSelect"></select>
+          </div>
+          <button type="button" id="regenerateAnalysisBtn" class="btn-secondary">Regenerate Analysis</button>
+        </div>
         <div class="analysis-summary" id="analysisSummary"></div>
         <div class="analysis-meta" id="analysisMeta"></div>
         <div class="analysis-grid">
@@ -910,6 +929,15 @@ const SECTION_POLARITY = {
   "Other Income": "pos", "Other Expenses": "neg"
 };
 
+// "Other Income" is the raw QBO section name and stays as the internal
+// computation key (SECTION_KEYS, SECTION_POLARITY, records) since it must
+// match the source data exactly — but this dataset routes plenty of
+// non-income items (auto expenses, taxes, etc.) through it, so the name
+// reads misleadingly wherever it's shown to a user. Display-only rename.
+function sectionDisplayLabel(key) {
+  return key === "Other Income" ? "Non-Operating Items" : key;
+}
+
 function arrowFor(current, compare, polarity, epsilon) {
   if (current == null || compare == null || !isFinite(current) || !isFinite(compare)) return { symbol: "–", cls: "flat" };
   const diff = current - compare;
@@ -970,7 +998,7 @@ function render() {
   renderStatement(summaryLines, sectionData);
   renderCards(summaryLines);
   renderAnalysis(entVal, companies);
-  renderCharts(companies, revenue);
+  renderCharts(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
 
@@ -1042,9 +1070,17 @@ function renderStatement(summaryLines, sectionData) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
     tbody.appendChild(buildRow("detail", label, cells));
   }
-  function addSubHeader(label) {
+  // Sub-headers are themselves clickable to collapse the whole group back —
+  // the only other control is the chevron on the summary row above, which
+  // can be scrolled out of view once a group is expanded (this is what was
+  // reported as "won't shrink back": there was no visible way to collapse
+  // from down inside the expanded detail rows).
+  function addSubHeader(label, collapseKey) {
     const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
-    tbody.appendChild(buildRow("section-sub-header", label, blanks));
+    const row = buildRow("section-sub-header", label, blanks);
+    row.classList.add("expand-toggle");
+    row.dataset.key = collapseKey;
+    tbody.appendChild(row);
   }
 
   summaryLines.forEach(line => {
@@ -1052,7 +1088,12 @@ function renderStatement(summaryLines, sectionData) {
     addPctRow(line.pctOfRevenue, line.polarity);
     if (line.expand && expandedKeys.has(line.key)) {
       line.expand.forEach(sectionKey => {
-        if (line.expand.length > 1) addSubHeader(sectionKey);
+        // Skip the sub-header when it would just repeat the parent row's own
+        // label (e.g. "Other Income" now displays as "Non-Operating Items",
+        // same as its parent) — showing it twice reads as broken, not helpful.
+        if (line.expand.length > 1 && sectionDisplayLabel(sectionKey) !== line.label) {
+          addSubHeader(sectionDisplayLabel(sectionKey), line.key);
+        }
         const pol = SECTION_POLARITY[sectionKey] || "pos";
         sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
       });
@@ -1495,14 +1536,129 @@ function cmpRow(label, data, polarity) {
 }
 
 // ---- Changes Analysis tab ----
-// Hand-authored commentary, manually refreshed by Claude on request (see
-// .claude/compute-variances.js). Keyed by "<entityValue>|<month label>" so a
-// new entry can be added for any entity/month combination without code
-// changes. Months/entities without an entry show a clear placeholder.
-// Reset empty for the MSS + Personal dataset — prior entries here were
-// written against the old Mohave 9-entity data and don't apply.
+// Two sources feed this tab, merged at render time:
+//  1. ANALYSIS_DATA (below) — optional hand-authored commentary Claude can
+//     bake into the file directly (see .claude/compute-variances.js for the
+//     same ranking math run standalone). Rarely used now that (2) exists.
+//  2. localStorage, written by the in-report "Generate/Regenerate Analysis"
+//     buttons (computeChangesAnalysis()) — self-serve, no Claude needed.
+//     NOTE: this only persists in the browser it was generated in; it does
+//     not sync across devices (same caveat as hiddenFindings below).
+// Both are keyed by "<entityValue>|<month label>", each mapping to an ARRAY
+// of versions, newest first — regenerating prepends rather than overwrites,
+// which is what powers the "Version" dropdown and historical runs. Each
+// version: { generatedAt, summary, positives: [...], negatives: [...] }.
 const ANALYSIS_DATA = {
 };
+
+function loadGeneratedAnalysis() {
+  try { return JSON.parse(localStorage.getItem("generatedAnalysis") || "{}"); }
+  catch { return {}; }
+}
+function saveGeneratedAnalysis(all) {
+  localStorage.setItem("generatedAnalysis", JSON.stringify(all));
+}
+
+// Ports the same "most telling comparison" ranking algorithm as
+// .claude/compute-variances.js so it can run client-side, on demand. The
+// commentary this produces is intentionally plain/formulaic — a self-serve
+// baseline, not a substitute for hand-authored analysis.
+function computeChangesAnalysis(companies, endIdx, entVal) {
+  const n = monthLabels.length;
+  const items = [];
+
+  SECTION_KEYS.forEach(sectionKey => {
+    const groups = new Map();
+    for (const rec of records) {
+      if (rec.section !== sectionKey) continue;
+      if (!companies.includes(rec.company)) continue;
+      if (!groups.has(rec.standardAccount)) groups.set(rec.standardAccount, zeros(n));
+      addInto(groups.get(rec.standardAccount), rec.values);
+    }
+    const polarity = SECTION_POLARITY[sectionKey] || "pos";
+    for (const [account, values] of groups.entries()) {
+      const mPair = monthPair(values, endIdx);
+      const yPair = ytdPair(values, endIdx);
+      const tPair = ttmPair(values, endIdx);
+      const aPair = { current: values[endIdx], prior: trailingAverage(values, endIdx, 12) };
+
+      const candidates = [
+        { basis: "vs. same month last year", pair: mPair },
+        { basis: "YTD vs. prior-year YTD", pair: yPair },
+        { basis: "TTM vs. prior 12 months", pair: tPair },
+        { basis: "vs. its trailing 12-mo average", pair: aPair }
+      ].filter(c => c.pair.current != null && c.pair.prior != null);
+      if (!candidates.length) continue;
+
+      let best = candidates[0];
+      for (const c of candidates) {
+        if (Math.abs(c.pair.current - c.pair.prior) > Math.abs(best.pair.current - best.pair.prior)) best = c;
+      }
+      const delta = best.pair.current - best.pair.prior;
+      if (Math.abs(delta) < 1) continue; // skip noise
+
+      const favorable = polarity === "neg" ? delta < 0 : delta > 0;
+      items.push({
+        section: sectionDisplayLabel(sectionKey), account, basis: best.basis,
+        current: best.pair.current, prior: best.pair.prior, delta,
+        pct: pctChange(best.pair.current, best.pair.prior), favorable
+      });
+    }
+  });
+
+  items.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  const MAX_PER_SIDE = 15;
+  const favItems = items.filter(it => it.favorable);
+  const unfavItems = items.filter(it => !it.favorable);
+
+  function toFinding(it) {
+    const direction = it.delta > 0 ? "Increased" : it.delta < 0 ? "Decreased" : "Roughly flat";
+    const magnitude = it.delta !== 0
+      ? ` ${fmtMoney(Math.abs(it.delta))} (${it.pct != null ? fmtPct(Math.abs(it.pct)) : "—"})`
+      : "";
+    return {
+      account: it.account,
+      section: it.section,
+      figures: `${fmtMoney(it.current)} vs ${fmtMoney(it.prior)} (Δ ${fmtMoney(it.delta)}, ${it.pct != null ? fmtPct(it.pct) : "—"})`,
+      note: `${direction}${magnitude} ${it.basis}.`
+    };
+  }
+
+  const entityLabel = entityDisplayName(entVal, companies);
+  const topFav = favItems[0], topUnfav = unfavItems[0];
+  let summary = `Auto-generated from ${items.length} account${items.length === 1 ? "" : "s"} with $1+ movement for ${entityLabel}, ${months[endIdx].label}.`;
+  if (topFav) summary += ` Largest favorable: ${topFav.account} (${fmtMoney(topFav.delta)}).`;
+  if (topUnfav) summary += ` Largest unfavorable: ${topUnfav.account} (${fmtMoney(topUnfav.delta)}).`;
+  if (favItems.length > MAX_PER_SIDE || unfavItems.length > MAX_PER_SIDE) {
+    summary += ` Showing top ${MAX_PER_SIDE} per side by $ impact (${favItems.length} favorable / ${unfavItems.length} unfavorable found in total).`;
+  }
+
+  return {
+    generatedAt: new Date().toLocaleString(),
+    summary,
+    positives: favItems.slice(0, MAX_PER_SIDE).map(toFinding),
+    negatives: unfavItems.slice(0, MAX_PER_SIDE).map(toFinding)
+  };
+}
+
+function generateAnalysisForCurrent() {
+  const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
+  const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
+  const analysisKey = entVal + "|" + months[currentMonthIdx].label;
+  const version = computeChangesAnalysis(companies, currentMonthIdx, entVal);
+  const all = loadGeneratedAnalysis();
+  if (!all[analysisKey]) all[analysisKey] = [];
+  all[analysisKey].unshift(version);
+  saveGeneratedAnalysis(all);
+  analysisVersionSelection[analysisKey] = 0; // jump to the version just generated
+  renderAnalysis(entVal, companies);
+}
+
+// Which version is currently selected per analysisKey (defaults to 0 =
+// latest). Persists across re-renders so switching tabs/entities and back
+// doesn't reset the user's chosen version.
+let analysisVersionSelection = {};
 
 // Who is viewing this report right now. There's no real login system yet —
 // this is a placeholder so the hide/show visibility split is already wired
@@ -1532,21 +1688,47 @@ function renderAnalysis(entVal, companies) {
     "Hand-written commentary on the accounts that moved most, using whichever comparison — vs. prior year, YTD, or trailing average — is most telling for that account.";
 
   const analysisKey = entVal + "|" + months[currentMonthIdx].label;
-  const data = ANALYSIS_DATA[analysisKey];
+  const generatedForKey = loadGeneratedAnalysis()[analysisKey] || [];
+  const versions = [...generatedForKey, ...(ANALYSIS_DATA[analysisKey] || [])];
   const emptyEl = document.getElementById("analysisEmpty");
   const bodyEl = document.getElementById("analysisBody");
+  const versionControl = document.getElementById("analysisVersionControl");
+  const versionSelect = document.getElementById("analysisVersionSelect");
 
-  if (!data) {
+  if (!versions || !versions.length) {
     emptyEl.style.display = "";
     bodyEl.style.display = "none";
+    versionControl.style.display = "none";
     return;
   }
   emptyEl.style.display = "none";
   bodyEl.style.display = "";
 
+  if (!(analysisKey in analysisVersionSelection) || analysisVersionSelection[analysisKey] >= versions.length) {
+    analysisVersionSelection[analysisKey] = 0; // default to latest
+  }
+  const selIdx = analysisVersionSelection[analysisKey];
+  const data = versions[selIdx];
+
+  if (versions.length > 1) {
+    versionControl.style.display = "";
+    versionSelect.innerHTML = "";
+    versions.forEach((v, i) => {
+      versionSelect.appendChild(new Option(i === 0 ? `Latest — ${v.generatedAt}` : v.generatedAt, String(i)));
+    });
+    versionSelect.value = String(selIdx);
+    versionSelect.onchange = () => {
+      analysisVersionSelection[analysisKey] = parseInt(versionSelect.value, 10);
+      renderAnalysis(entVal, companies);
+    };
+  } else {
+    versionControl.style.display = "none";
+  }
+
   document.getElementById("analysisSummary").textContent = data.summary;
   document.getElementById("analysisMeta").textContent =
-    `${entityDisplayName(entVal, companies)} · ${months[currentMonthIdx].label} · Written ${data.generatedAt}`;
+    `${entityDisplayName(entVal, companies)} · ${months[currentMonthIdx].label} · Written ${data.generatedAt}` +
+    (versions.length > 1 ? ` · Version ${selIdx + 1} of ${versions.length}` : "");
 
   const hiddenFindings = loadHiddenFindings();
 
@@ -1554,7 +1736,7 @@ function renderAnalysis(entVal, companies) {
     const container = document.getElementById(containerId);
     container.innerHTML = "";
     list.forEach(item => {
-      const findingKey = analysisKey + "|" + direction + "|" + item.account;
+      const findingKey = analysisKey + "|v" + selIdx + "|" + direction + "|" + item.account;
       const isHidden = !!hiddenFindings[findingKey];
 
       if (isHidden && CURRENT_ROLE === "client") return; // never reaches the client's DOM
@@ -1603,6 +1785,11 @@ function renderAnalysis(entVal, companies) {
 
 // ---- Account Trends tab ----
 
+// Dropdown option values are "section::account" for a detail account, or
+// "__SUMMARY__::<summaryLineKey>" for one of the P&L Statement's own
+// Revenue/COS/Gross Profit/etc. totals.
+const SUMMARY_VALUE_PREFIX = "__SUMMARY__::";
+
 function buildAccountSeries(sectionKey, account, companies) {
   const n = monthLabels.length;
   const values = zeros(n);
@@ -1614,23 +1801,31 @@ function buildAccountSeries(sectionKey, account, companies) {
   return values;
 }
 
-function populateAccountDropdown(companies) {
+function populateAccountDropdown(companies, summaryLines) {
   const sel = document.getElementById("chartAccountSelect");
   const prevValue = sel.value;
+  sel.innerHTML = "";
+
+  const summaryGroup = document.createElement("optgroup");
+  summaryGroup.label = "P&L Summary";
+  summaryLines.forEach(line => {
+    summaryGroup.appendChild(new Option(line.label, SUMMARY_VALUE_PREFIX + line.key));
+  });
+  sel.appendChild(summaryGroup);
+
   const bySection = new Map();
   for (const rec of records) {
     if (!companies.includes(rec.company)) continue;
     if (!bySection.has(rec.section)) bySection.set(rec.section, new Set());
     bySection.get(rec.section).add(rec.standardAccount);
   }
-  sel.innerHTML = "";
   SECTION_KEYS.forEach(sectionKey => {
     const accounts = bySection.get(sectionKey);
     if (!accounts || !accounts.size) return;
     const group = document.createElement("optgroup");
-    group.label = sectionKey;
+    group.label = sectionDisplayLabel(sectionKey);
     [...accounts].sort((a, b) => a.localeCompare(b)).forEach(acct => {
-      group.appendChild(new Option(acct, sectionKey + "" + acct));
+      group.appendChild(new Option(acct, sectionKey + "::" + acct));
     });
     sel.appendChild(group);
   });
@@ -1638,9 +1833,9 @@ function populateAccountDropdown(companies) {
   else if (sel.options.length) sel.selectedIndex = 0;
 }
 
-function renderCharts(companies, revenue) {
+function renderCharts(companies, summaryLines) {
   const sel = document.getElementById("chartAccountSelect");
-  populateAccountDropdown(companies);
+  populateAccountDropdown(companies, summaryLines);
   const val = sel.value;
   const emptyEl = document.getElementById("chartsEmpty");
   const contentEl = document.getElementById("chartsContent");
@@ -1653,9 +1848,21 @@ function renderCharts(companies, revenue) {
   emptyEl.style.display = "none";
   contentEl.style.display = "";
 
-  const [sectionKey, account] = val.split("");
-  const series = buildAccountSeries(sectionKey, account, companies);
-  const pctSeries = divSeries(series, revenue);
+  const revenueSeries = summaryLines.find(l => l.key === "revenue").series;
+
+  let series, polarity, headingLabel;
+  if (val.startsWith(SUMMARY_VALUE_PREFIX)) {
+    const line = summaryLines.find(l => l.key === val.slice(SUMMARY_VALUE_PREFIX.length));
+    series = line.series;
+    polarity = line.polarity;
+    headingLabel = `${line.label} — P&L Summary`;
+  } else {
+    const [sectionKey, account] = val.split("::");
+    series = buildAccountSeries(sectionKey, account, companies);
+    polarity = SECTION_POLARITY[sectionKey] || "pos";
+    headingLabel = `${account} — ${sectionDisplayLabel(sectionKey)}`;
+  }
+  const pctSeries = divSeries(series, revenueSeries);
 
   const endIdx = currentMonthIdx;
   const startIdx = Math.max(0, endIdx - 24);
@@ -1666,12 +1873,11 @@ function renderCharts(companies, revenue) {
   const pctPoints = idxRange.map(i => ({ label: months[i].label, value: pctSeries[i] }));
 
   document.getElementById("chartsHeading").textContent =
-    `${account} — ${sectionKey} · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
+    `${headingLabel} · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
     `${dollarPoints.length}-month window ending ${months[endIdx].label}`;
 
-  const polarity = SECTION_POLARITY[sectionKey] || "pos";
   renderChartAvgChips("chartDollarAvgRow", series, null, endIdx, polarity, false);
-  renderChartAvgChips("chartPctAvgRow", series, revenue, endIdx, polarity, true);
+  renderChartAvgChips("chartPctAvgRow", series, revenueSeries, endIdx, polarity, true);
 
   renderLineChart(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), dollarPoints, { isPct: false });
   renderLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), pctPoints, { isPct: true });
@@ -1848,6 +2054,8 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
+document.getElementById("generateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
+document.getElementById("regenerateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
 document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
