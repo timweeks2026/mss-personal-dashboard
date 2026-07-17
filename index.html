@@ -87,6 +87,8 @@
   .add-row-btn:hover { text-decoration: underline; }
   .retire-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
   .retire-card h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0 0 4px; }
+  .retire-card h3.collapsible { cursor: pointer; user-select: none; }
+  .retire-card h3 .card-toggle { float: right; color: var(--accent); font-size: 11px; text-transform: none; }
   .retire-card .card-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
   .save-indicator { font-size: 11.5px; color: var(--muted); margin-left: 10px; }
   .save-indicator.saving { color: var(--accent); }
@@ -1040,27 +1042,53 @@ let retireSaveTimer = null;
 
 function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
 
+// Seeded from the original "Retirement Tracking" Google Sheet tab — this is
+// the agreed starting point, to be adjusted from here rather than guessed
+// at. Fixed (not random) ids so investment/loan/cost entries can link to
+// the matching goal deterministically.
 function defaultRetirementData() {
   const startYear = new Date().getFullYear();
   const firstYear = String(startYear);
+  const G = {
+    hsa: "goal_hsa", seTax: "goal_seTax", incTax: "goal_incTax", solo401k: "goal_solo401k",
+    heloc: "goal_heloc", rothIRA: "goal_rothIRA", jasmine: "goal_jasmine", brokerage: "goal_brokerage"
+  };
   return {
     startYear,
     endYear: startYear + 11,
     goals: [
-      { id: uid("goal"), name: "HSA", priority: 1 },
-      { id: uid("goal"), name: "Self-Employment Taxes", priority: 1 },
-      { id: uid("goal"), name: "Income Taxes", priority: 1 },
-      { id: uid("goal"), name: "Solo 401K", priority: 2 },
-      { id: uid("goal"), name: "Payment on HELOC", priority: 3 },
-      { id: uid("goal"), name: "Backdoor Roth IRA", priority: 3 },
-      { id: uid("goal"), name: "Additional Payment on Home", priority: 4 },
-      { id: uid("goal"), name: "Brokerage", priority: 4 }
+      { id: G.hsa, name: "HSA", priority: 1 },
+      { id: G.seTax, name: "Self-Employment Taxes", priority: 1 },
+      { id: G.incTax, name: "Income Taxes", priority: 1 },
+      { id: G.solo401k, name: "Solo 401K", priority: 2 },
+      { id: G.heloc, name: "Payment on HELOC", priority: 3 },
+      { id: G.rothIRA, name: "Backdoor Roth IRA", priority: 3 },
+      { id: G.jasmine, name: "Additional Payment on Jasmine Home", priority: 4 },
+      { id: G.brokerage, name: "Brokerage", priority: 4 }
     ],
-    investmentAccounts: [],
-    loanAccounts: [],
-    otherCosts: [],
+    investmentAccounts: [
+      { id: "inv_solo401k", name: "Solo 401K", growthPct: 8, startingBalance: 144600, defaultAnnualAmount: 80000, linkedGoalId: G.solo401k, actualBalances: {} },
+      { id: "inv_rothIRA", name: "Backdoor Roth IRA", growthPct: 8, startingBalance: 0, defaultAnnualAmount: 16000, linkedGoalId: G.rothIRA, actualBalances: {} },
+      { id: "inv_hsa", name: "HSA", growthPct: 6, startingBalance: 0, defaultAnnualAmount: 9750, linkedGoalId: G.hsa, actualBalances: {} },
+      { id: "inv_brokerage", name: "Brokerage", growthPct: 8, startingBalance: 2000, defaultAnnualAmount: 10000, linkedGoalId: G.brokerage, actualBalances: {} }
+    ],
+    // The sheet only ever modeled HELOC as a flat annual payment, never as
+    // an amortizing balance — startingBalance/ratePct are placeholders (0)
+    // until the real current balance and rate are entered.
+    loanAccounts: [
+      { id: "loan_heloc", name: "HELOC", startingBalance: 0, ratePct: 0, defaultAnnualAmount: 50000, linkedGoalId: G.heloc, actualBalances: {} }
+    ],
+    otherCosts: [
+      { id: "cost_seTax", name: "Self-Employment Taxes", defaultAnnualAmount: 16000, linkedGoalId: G.seTax },
+      { id: "cost_incTax", name: "Income Taxes", defaultAnnualAmount: 50000, linkedGoalId: G.incTax },
+      { id: "cost_jasmine", name: "Additional Payment on Jasmine Home", defaultAnnualAmount: 33600, linkedGoalId: G.jasmine }
+    ],
     years: {
-      [firstYear]: { cashSources: [], targets: {}, funded: {}, locked: false, lockedSnapshot: null, recommendations: [] }
+      [firstYear]: {
+        cashSources: [],
+        targets: { [G.hsa]: 9750, [G.seTax]: 16000, [G.incTax]: 50000, [G.solo401k]: 80000, [G.heloc]: 50000, [G.rothIRA]: 16000, [G.jasmine]: 33600, [G.brokerage]: 10000 },
+        funded: {}, locked: false, lockedSnapshot: null, recommendations: []
+      }
     }
   };
 }
@@ -1152,15 +1180,20 @@ function amountForYear(account, year) {
   return Number(account.defaultAnnualAmount) || 0;
 }
 
+// If an actual (tracked) balance has been entered for a year, it wins over
+// the computed projection for that year AND becomes the "prior" balance
+// the following year builds from — this is what makes the 12-year table
+// double as a tracking tool: known reality overrides assumption from the
+// point it's entered forward, without needing to touch the assumptions.
 function projectInvestments() {
   const years = [];
   for (let y = retirementData.startYear; y <= retirementData.endYear; y++) years.push(y);
   return retirementData.investmentAccounts.map(acct => {
     const rate = (Number(acct.growthPct) || 0) / 100;
     const contributions = years.map(y => amountForYear(acct, y));
-    const balances = [];
+    const balances = [], projectedBalances = [];
     let prior = Number(acct.startingBalance) || 0;
-    contributions.forEach(contrib => {
+    contributions.forEach((contrib, i) => {
       // Matches the original sheet's convention exactly (verified against
       // its actual values): the new contribution gets the full annual rate
       // and the prior balance gets half — i.e. contributions are modeled as
@@ -1168,11 +1201,14 @@ function projectInvestments() {
       // averaged over the year, not the more typical mid-year-contribution
       // convention. Keep this convention if this projection is ever
       // reconciled against the original sheet again.
-      const bal = contrib * (1 + rate) + prior * (1 + rate / 2);
+      const projected = contrib * (1 + rate) + prior * (1 + rate / 2);
+      projectedBalances.push(projected);
+      const actual = (acct.actualBalances || {})[years[i]];
+      const bal = actual != null && actual !== "" ? Number(actual) : projected;
       balances.push(bal);
       prior = bal;
     });
-    return { account: acct, years, contributions, balances };
+    return { account: acct, years, contributions, balances, projectedBalances };
   });
 }
 
@@ -1182,14 +1218,17 @@ function projectLoans() {
   return retirementData.loanAccounts.map(acct => {
     const rate = (Number(acct.ratePct) || 0) / 100;
     const payments = years.map(y => amountForYear(acct, y));
-    const balances = [];
+    const balances = [], projectedBalances = [];
     let prior = Number(acct.startingBalance) || 0;
-    payments.forEach(payment => {
-      const bal = Math.max(0, prior * (1 + rate) - payment);
+    payments.forEach((payment, i) => {
+      const projected = Math.max(0, prior * (1 + rate) - payment);
+      projectedBalances.push(projected);
+      const actual = (acct.actualBalances || {})[years[i]];
+      const bal = actual != null && actual !== "" ? Number(actual) : projected;
       balances.push(bal);
       prior = bal;
     });
-    return { account: acct, years, payments, balances };
+    return { account: acct, years, payments, balances, projectedBalances };
   });
 }
 
@@ -1433,6 +1472,32 @@ function renderRecommendations() {
   el.insertBefore(summary, el.firstChild);
 }
 
+// Wraps every .retire-card's content (everything after its <h3>) in a
+// collapsible body and adds a click-to-toggle chevron to the header — runs
+// once at page load since the cards themselves are static HTML; only their
+// table contents get rebuilt by the render*Table() functions above.
+function initCollapsibleCards() {
+  document.querySelectorAll(".retire-card").forEach(card => {
+    const h3 = card.querySelector("h3");
+    if (!h3 || card.querySelector(".card-toggle")) return;
+    const body = document.createElement("div");
+    body.className = "retire-card-body";
+    [...card.children].filter(el => el !== h3).forEach(el => body.appendChild(el));
+    card.appendChild(body);
+
+    const toggle = document.createElement("span");
+    toggle.className = "card-toggle";
+    toggle.textContent = "▾";
+    h3.appendChild(toggle);
+    h3.classList.add("collapsible");
+    h3.addEventListener("click", () => {
+      const collapsed = body.style.display === "none";
+      body.style.display = collapsed ? "" : "none";
+      toggle.textContent = collapsed ? "▾" : "▸";
+    });
+  });
+}
+
 // ---- 12-year tab ----
 function renderRetire12Tab() {
   if (!retirementLoaded) return;
@@ -1502,16 +1567,49 @@ function renderLoanAccountsTable() {
 function renderOtherCostsTable() {
   const table = document.getElementById("otherCostsTable");
   table.innerHTML = "";
-  table.innerHTML = "<thead><tr><th>Cost</th><th>Annual Amount</th><th></th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>Cost</th><th>Default Annual Amount</th><th>Linked Goal</th><th></th></tr></thead>";
   const tbody = document.createElement("tbody");
   retirementData.otherCosts.forEach((cost, i) => {
     const tr = document.createElement("tr");
     tr.appendChild(editCell(cost, "name", "text"));
-    const amt = editCell(cost, "annualAmount", "number", () => renderRetire12Table()); amt.className = "num-col"; tr.appendChild(amt);
+    const amt = editCell(cost, "defaultAnnualAmount", "number", () => renderRetire12Table()); amt.className = "num-col"; tr.appendChild(amt);
+    tr.appendChild(linkedGoalCell(cost));
     tr.appendChild(deleteCell(() => { retirementData.otherCosts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
+}
+
+// The one editable row in the 12-year table: lets you record a real,
+// known year-end balance that overrides the projection from that year
+// forward — this is the "tracking tool" half of the 12-year view. Blank
+// cells show the projected value as a placeholder so it's obvious at a
+// glance which years are tracked-actual vs. still-projected.
+function actualBalanceRow(acct, years, projectedBalances) {
+  const tr = document.createElement("tr");
+  tr.className = "detail";
+  const labelTd = document.createElement("td");
+  labelTd.className = "label-col";
+  labelTd.innerHTML = `<span class="no-chev"></span>${escapeHtml(acct.account.name)} — Actual Balance`;
+  tr.appendChild(labelTd);
+  if (!acct.account.actualBalances) acct.account.actualBalances = {};
+  years.forEach((y, i) => {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "number";
+    input.placeholder = Math.round(projectedBalances[i]).toLocaleString("en-US");
+    input.value = acct.account.actualBalances[y] != null ? acct.account.actualBalances[y] : "";
+    input.style.cssText = "width:100%; box-sizing:border-box; text-align:right; font-size:11.5px; padding:3px 5px; border:1px solid var(--border); border-radius:4px; font-family:inherit;";
+    input.addEventListener("input", () => {
+      if (input.value === "") delete acct.account.actualBalances[y];
+      else acct.account.actualBalances[y] = parseFloat(input.value);
+      saveRetirementData();
+      renderRetire12Table();
+    });
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  return tr;
 }
 
 function renderRetire12Table() {
@@ -1538,6 +1636,7 @@ function renderRetire12Table() {
   invProjections.forEach(p => {
     row(p.account.name + " — Contribution", p.contributions);
     row(p.account.name + " — Balance", p.balances, "summary-line");
+    tbody.appendChild(actualBalanceRow(p, years, p.projectedBalances));
     p.balances.forEach((b, i) => totalInvestmentValue[i] += b);
   });
   if (invProjections.length) row("Total Investment Value", totalInvestmentValue, "grandtotal");
@@ -1547,15 +1646,16 @@ function renderRetire12Table() {
   loanProjections.forEach(p => {
     row(p.account.name + " — Payment", p.payments);
     row(p.account.name + " — Balance", p.balances, "summary-line");
+    tbody.appendChild(actualBalanceRow(p, years, p.projectedBalances));
     p.balances.forEach((b, i) => totalLoanBalance[i] += b);
   });
   if (loanProjections.length) row("Total Loan Balance", totalLoanBalance, "grandtotal");
 
   const totalOtherCosts = years.map(() => 0);
   retirementData.otherCosts.forEach(cost => {
-    const amt = Number(cost.annualAmount) || 0;
-    row(cost.name, years.map(() => amt));
-    years.forEach((y, i) => totalOtherCosts[i] += amt);
+    const amts = years.map(y => amountForYear(cost, y));
+    row(cost.name, amts);
+    amts.forEach((amt, i) => totalOtherCosts[i] += amt);
   });
 
   const totalCashNeeds = years.map((y, i) =>
@@ -3006,6 +3106,7 @@ document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
 });
 document.getElementById("refreshBtn").addEventListener("click", loadData);
 
+initCollapsibleCards();
 loadData();
 </script>
 
