@@ -1234,18 +1234,42 @@ function projectLoans() {
 }
 
 // ---- Editable-table row helpers ----
+// Re-rendering a table from inside its own input's change handler (needed
+// whenever a field affects a computed column, a sort order, or a different
+// table entirely) destroys and recreates that input — which steals focus
+// and the cursor position after every single keystroke. This restores both
+// by tagging inputs with a stable key (survives the rebuild since it's not
+// tied to the destroyed DOM node) and re-finding/re-focusing after.
+function withFocusPreserved(renderFn) {
+  const active = document.activeElement;
+  const key = active && active.getAttribute && active.getAttribute("data-focus-key");
+  const selStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+  const selEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+  renderFn();
+  if (!key) return;
+  const restored = document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+  if (!restored) return;
+  restored.focus();
+  if (selStart != null && restored.setSelectionRange) {
+    try { restored.setSelectionRange(selStart, selEnd); } catch (e) {}
+  }
+}
+
 // Builds one <td> containing a labeled input, wired to write straight back
 // into `obj[field]` on every change and trigger a debounced save + optional
 // re-render (used when a change affects computed columns elsewhere).
-function editCell(obj, field, type, onChange) {
+// focusKey should be stable across re-renders (e.g. `${obj.id}_${field}`) —
+// NOT based on array index if rows can be deleted/reordered.
+function editCell(obj, field, type, onChange, focusKey) {
   const td = document.createElement("td");
   const input = document.createElement("input");
   input.type = type;
   input.value = obj[field] == null ? "" : obj[field];
+  if (focusKey) input.setAttribute("data-focus-key", focusKey);
   input.addEventListener("input", () => {
     obj[field] = type === "number" ? (input.value === "" ? 0 : parseFloat(input.value)) : input.value;
     saveRetirementData();
-    if (onChange) onChange();
+    if (onChange) withFocusPreserved(onChange);
   });
   td.appendChild(input);
   return td;
@@ -1320,8 +1344,8 @@ function renderCashSourcesTable(yd) {
   yd.cashSources.forEach((src, i) => {
     total += Number(src.amount) || 0;
     const tr = document.createElement("tr");
-    tr.appendChild(editCell(src, "name", "text"));
-    const amtTd = editCell(src, "amount", "number", () => renderRetireYearTab());
+    tr.appendChild(editCell(src, "name", "text", null, `cash_${i}_name`));
+    const amtTd = editCell(src, "amount", "number", () => renderCashSourcesTable(yd), `cash_${i}_amount`);
     amtTd.className = "num-col";
     tr.appendChild(amtTd);
     const dateTd = editCell(src, "dateAvailable", "date");
@@ -1357,8 +1381,10 @@ function renderGoalsTable(yd) {
     const pct = target > 0 ? (funded / target) * 100 : 0;
 
     const tr = document.createElement("tr");
-    tr.appendChild(editCell(goal, "name", "text"));
-    const prTd = editCell(goal, "priority", "number", () => renderRetireYearTab());
+    tr.appendChild(editCell(goal, "name", "text", null, `goal_${goal.id}_name`));
+    // Priority changes the sort order itself, so a full table rebuild can't
+    // be avoided here — but focus/cursor position still needs to survive it.
+    const prTd = editCell(goal, "priority", "number", () => renderGoalsTable(yd), `goal_${goal.id}_priority`);
     prTd.className = "num-col";
     tr.appendChild(prTd);
 
@@ -1367,11 +1393,11 @@ function renderGoalsTable(yd) {
     const targetInput = document.createElement("input");
     targetInput.type = "number";
     targetInput.value = target;
+    targetInput.setAttribute("data-focus-key", `goal_${goal.id}_target`);
     targetInput.addEventListener("input", () => {
       yd.targets[goal.id] = targetInput.value === "" ? 0 : parseFloat(targetInput.value);
       saveRetirementData();
-      renderGoalsTable(yd);
-      renderScoreboard(yd, currentRetireYear);
+      withFocusPreserved(() => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); });
     });
     targetTd.appendChild(targetInput);
     tr.appendChild(targetTd);
@@ -1381,11 +1407,11 @@ function renderGoalsTable(yd) {
     const fundedInput = document.createElement("input");
     fundedInput.type = "number";
     fundedInput.value = funded;
+    fundedInput.setAttribute("data-focus-key", `goal_${goal.id}_funded`);
     fundedInput.addEventListener("input", () => {
       yd.funded[goal.id] = fundedInput.value === "" ? 0 : parseFloat(fundedInput.value);
       saveRetirementData();
-      renderGoalsTable(yd);
-      renderScoreboard(yd, currentRetireYear);
+      withFocusPreserved(() => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); });
     });
     fundedTd.appendChild(fundedInput);
     tr.appendChild(fundedTd);
@@ -1536,10 +1562,10 @@ function renderInvestAccountsTable() {
   const tbody = document.createElement("tbody");
   retirementData.investmentAccounts.forEach((acct, i) => {
     const tr = document.createElement("tr");
-    tr.appendChild(editCell(acct, "name", "text"));
-    const g = editCell(acct, "growthPct", "number", () => renderRetire12Table()); g.className = "num-col"; tr.appendChild(g);
-    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table()); sb.className = "num-col"; tr.appendChild(sb);
-    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table()); da.className = "num-col"; tr.appendChild(da);
+    tr.appendChild(editCell(acct, "name", "text", null, `inv_${acct.id}_name`));
+    const g = editCell(acct, "growthPct", "number", () => renderRetire12Table(), `inv_${acct.id}_growthPct`); g.className = "num-col"; tr.appendChild(g);
+    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table(), `inv_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
+    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table(), `inv_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
     tr.appendChild(linkedGoalCell(acct));
     tr.appendChild(deleteCell(() => { retirementData.investmentAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1554,10 +1580,10 @@ function renderLoanAccountsTable() {
   const tbody = document.createElement("tbody");
   retirementData.loanAccounts.forEach((acct, i) => {
     const tr = document.createElement("tr");
-    tr.appendChild(editCell(acct, "name", "text"));
-    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table()); sb.className = "num-col"; tr.appendChild(sb);
-    const rt = editCell(acct, "ratePct", "number", () => renderRetire12Table()); rt.className = "num-col"; tr.appendChild(rt);
-    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table()); da.className = "num-col"; tr.appendChild(da);
+    tr.appendChild(editCell(acct, "name", "text", null, `loan_${acct.id}_name`));
+    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table(), `loan_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
+    const rt = editCell(acct, "ratePct", "number", () => renderRetire12Table(), `loan_${acct.id}_ratePct`); rt.className = "num-col"; tr.appendChild(rt);
+    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table(), `loan_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
     tr.appendChild(linkedGoalCell(acct));
     tr.appendChild(deleteCell(() => { retirementData.loanAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1572,8 +1598,8 @@ function renderOtherCostsTable() {
   const tbody = document.createElement("tbody");
   retirementData.otherCosts.forEach((cost, i) => {
     const tr = document.createElement("tr");
-    tr.appendChild(editCell(cost, "name", "text"));
-    const amt = editCell(cost, "defaultAnnualAmount", "number", () => renderRetire12Table()); amt.className = "num-col"; tr.appendChild(amt);
+    tr.appendChild(editCell(cost, "name", "text", null, `cost_${cost.id}_name`));
+    const amt = editCell(cost, "defaultAnnualAmount", "number", () => renderRetire12Table(), `cost_${cost.id}_defaultAnnualAmount`); amt.className = "num-col"; tr.appendChild(amt);
     tr.appendChild(linkedGoalCell(cost));
     tr.appendChild(deleteCell(() => { retirementData.otherCosts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1601,11 +1627,12 @@ function actualBalanceRow(acct, years, projectedBalances) {
     input.placeholder = Math.round(projectedBalances[i]).toLocaleString("en-US");
     input.value = acct.account.actualBalances[y] != null ? acct.account.actualBalances[y] : "";
     input.style.cssText = "width:100%; box-sizing:border-box; text-align:right; font-size:11.5px; padding:3px 5px; border:1px solid var(--border); border-radius:4px; font-family:inherit;";
+    input.setAttribute("data-focus-key", `actual_${acct.account.id}_${y}`);
     input.addEventListener("input", () => {
       if (input.value === "") delete acct.account.actualBalances[y];
       else acct.account.actualBalances[y] = parseFloat(input.value);
       saveRetirementData();
-      renderRetire12Table();
+      withFocusPreserved(() => renderRetire12Table());
     });
     td.appendChild(input);
     tr.appendChild(td);
