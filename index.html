@@ -93,6 +93,7 @@
     background: #eaf1fb; border: 1px solid var(--accent); border-radius: 5px; padding: 3px 9px; cursor: pointer;
   }
   .retire-card h3 .card-toggle:hover { background: var(--accent); color: #fff; }
+  .card-totals-line { font-size: 12.5px; font-weight: 700; color: var(--navy); background: #eef2f7; border-radius: 6px; padding: 7px 10px; margin: 4px 0 8px; }
   .retire-card .card-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
   .save-indicator { font-size: 11.5px; color: var(--muted); margin-left: 10px; }
   .save-indicator.saving { color: var(--accent); }
@@ -480,6 +481,7 @@
 
       <div class="retire-card">
         <h3>Available Cash</h3>
+        <div class="always-visible card-totals-line" id="cashTotalLine"></div>
         <div class="card-sub">Cash sources for this year's plan, each with the date it becomes available.</div>
         <table class="edit-table" id="cashSourcesTable"></table>
         <button type="button" class="add-row-btn" id="addCashSourceBtn">+ Add cash source</button>
@@ -487,10 +489,11 @@
 
       <div class="retire-card">
         <h3>Funding Priorities</h3>
+        <div class="always-visible card-totals-line" id="goalsTotalLine"></div>
+        <div class="always-visible" id="cashVsTargetLine" style="margin-bottom:10px;"></div>
         <div class="card-sub">Lower priority number = funded first. "Funded" is tracked manually as you actually pay/fund each goal.</div>
         <table class="edit-table" id="goalsTable"></table>
         <button type="button" class="add-row-btn" id="addGoalBtn">+ Add goal</button>
-        <div id="cashVsTargetLine" class="lock-banner" style="margin-top:12px; margin-bottom:0;"></div>
       </div>
 
       <div class="retire-card">
@@ -1408,6 +1411,7 @@ function renderCashSourcesTable(yd) {
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
+  document.getElementById("cashTotalLine").textContent = `Total Available Cash: ${fmtMoney(total)}`;
   const tfoot = document.createElement("tfoot");
   const ftr = document.createElement("tr");
   ftr.appendChild(textCell("Total Available Cash"));
@@ -1474,6 +1478,8 @@ function renderGoalsTable(yd) {
   });
   const totalUnfunded = Math.max(0, totalTarget - totalFunded);
   const totalPct = totalTarget > 0 ? totalFunded / totalTarget : 0;
+  document.getElementById("goalsTotalLine").textContent =
+    `Target: ${fmtMoney(totalTarget)} · Funded: ${fmtMoney(totalFunded)} · Unfunded: ${fmtMoney(totalUnfunded)} · Funded %: ${fmtPct(totalPct)}`;
   const ftr = document.createElement("tr");
   ftr.appendChild(textCell("Total"));
   ftr.appendChild(textCell(""));
@@ -1565,9 +1571,12 @@ function initCollapsibleCards() {
   document.querySelectorAll(".retire-card").forEach(card => {
     const h3 = card.querySelector("h3");
     if (!h3 || card.querySelector(".card-toggle")) return;
+    // Elements marked .always-visible (e.g. a totals summary) stay outside
+    // the collapsible body — collapsing a section still needs to leave its
+    // key numbers visible, not hide everything including the totals.
     const body = document.createElement("div");
     body.className = "retire-card-body";
-    [...card.children].filter(el => el !== h3).forEach(el => body.appendChild(el));
+    [...card.children].filter(el => el !== h3 && !el.classList.contains("always-visible")).forEach(el => body.appendChild(el));
     card.appendChild(body);
 
     // A visible bordered button reading "▾ Collapse" / "▸ Expand" — a lone
