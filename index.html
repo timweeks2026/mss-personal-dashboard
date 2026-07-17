@@ -78,7 +78,7 @@
   .edit-table input[type="text"], .edit-table input[type="number"], .edit-table input[type="date"], .edit-table select {
     width: 100%; box-sizing: border-box; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit;
   }
-  .edit-table input[type="number"] { text-align: right; }
+  .edit-table input[type="number"], .edit-table input.currency-input { text-align: right; }
   .edit-table td.num-col { width: 110px; }
   .edit-table td.date-col { width: 130px; }
   .edit-table td.action-col { width: 40px; text-align: center; }
@@ -87,8 +87,12 @@
   .add-row-btn:hover { text-decoration: underline; }
   .retire-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
   .retire-card h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0 0 4px; }
-  .retire-card h3.collapsible { cursor: pointer; user-select: none; }
-  .retire-card h3 .card-toggle { float: right; color: var(--accent); font-size: 11px; text-transform: none; }
+  .retire-card h3.collapsible-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .retire-card h3 .card-toggle {
+    text-transform: none; font-weight: 600; font-size: 11.5px; color: var(--accent);
+    background: #eaf1fb; border: 1px solid var(--accent); border-radius: 5px; padding: 3px 9px; cursor: pointer;
+  }
+  .retire-card h3 .card-toggle:hover { background: var(--accent); color: #fff; }
   .retire-card .card-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
   .save-indicator { font-size: 11.5px; color: var(--muted); margin-left: 10px; }
   .save-indicator.saving { color: var(--accent); }
@@ -486,6 +490,7 @@
         <div class="card-sub">Lower priority number = funded first. "Funded" is tracked manually as you actually pay/fund each goal.</div>
         <table class="edit-table" id="goalsTable"></table>
         <button type="button" class="add-row-btn" id="addGoalBtn">+ Add goal</button>
+        <div id="cashVsTargetLine" class="lock-banner" style="margin-top:12px; margin-bottom:0;"></div>
       </div>
 
       <div class="retire-card">
@@ -1284,6 +1289,7 @@ function editCell(obj, field, type, onChange, focusKey) {
   if (type === "currency") {
     input.type = "text";
     input.inputMode = "decimal";
+    input.className = "currency-input";
     input.value = fmtCurrencyInput(obj[field]);
     input.addEventListener("focus", () => { input.value = obj[field] ? String(obj[field]) : ""; input.select(); });
     input.addEventListener("input", () => { obj[field] = parseCurrencyInput(input.value); saveRetirementData(); });
@@ -1361,6 +1367,23 @@ function renderRetireYearTab() {
   renderCashSourcesTable(yd);
   renderGoalsTable(yd);
   renderScoreboard(yd, year);
+  renderCashVsTargetLine(yd);
+}
+
+function renderCashVsTargetLine(yd) {
+  const el = document.getElementById("cashVsTargetLine");
+  const totalCash = (yd.cashSources || []).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const totalTarget = retirementData.goals.reduce((s, g) => s + (Number(yd.targets[g.id]) || 0), 0);
+  const diff = totalCash - totalTarget;
+  if (diff >= 0) {
+    el.className = "lock-banner locked";
+    el.style.marginTop = "12px"; el.style.marginBottom = "0";
+    el.textContent = `Surplus: ${fmtMoney(diff)} available cash beyond this year's funding priorities (${fmtMoney(totalCash)} available − ${fmtMoney(totalTarget)} targeted).`;
+  } else {
+    el.className = "lock-banner unlocked";
+    el.style.marginTop = "12px"; el.style.marginBottom = "0";
+    el.textContent = `Deficit: ${fmtMoney(-diff)} short of fully funding this year's priorities (${fmtMoney(totalCash)} available − ${fmtMoney(totalTarget)} targeted).`;
+  }
 }
 
 function renderCashSourcesTable(yd) {
@@ -1375,7 +1398,7 @@ function renderCashSourcesTable(yd) {
     total += Number(src.amount) || 0;
     const tr = document.createElement("tr");
     tr.appendChild(editCell(src, "name", "text", null, `cash_${i}_name`));
-    const amtTd = editCell(src, "amount", "currency", () => renderCashSourcesTable(yd), `cash_${i}_amount`);
+    const amtTd = editCell(src, "amount", "currency", () => { renderCashSourcesTable(yd); renderCashVsTargetLine(yd); }, `cash_${i}_amount`);
     amtTd.className = "num-col";
     tr.appendChild(amtTd);
     const dateTd = editCell(src, "dateAvailable", "date");
@@ -1423,12 +1446,12 @@ function renderGoalsTable(yd) {
     // separate hand-rolled input — editCell's `obj[field] = v` just invokes
     // the setter below.
     const targetProxy = { get value() { return Number(yd.targets[goal.id]) || 0; }, set value(v) { yd.targets[goal.id] = v; } };
-    const targetTd = editCell(targetProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); }, `goal_${goal.id}_target`);
+    const targetTd = editCell(targetProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); renderCashVsTargetLine(yd); }, `goal_${goal.id}_target`);
     targetTd.className = "num-col";
     tr.appendChild(targetTd);
 
     const fundedProxy = { get value() { return Number(yd.funded[goal.id]) || 0; }, set value(v) { yd.funded[goal.id] = v; } };
-    const fundedTd = editCell(fundedProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); }, `goal_${goal.id}_funded`);
+    const fundedTd = editCell(fundedProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); renderCashVsTargetLine(yd); }, `goal_${goal.id}_funded`);
     fundedTd.className = "num-col";
     tr.appendChild(fundedTd);
 
@@ -1547,16 +1570,25 @@ function initCollapsibleCards() {
     [...card.children].filter(el => el !== h3).forEach(el => body.appendChild(el));
     card.appendChild(body);
 
-    const toggle = document.createElement("span");
+    // A visible bordered button reading "▾ Collapse" / "▸ Expand" — a lone
+    // floated chevron character turned out to be too easy to miss entirely.
+    h3.classList.add("collapsible-header");
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = h3.textContent;
+    h3.textContent = "";
+    h3.appendChild(titleSpan);
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
     toggle.className = "card-toggle";
-    toggle.textContent = "▾";
+    toggle.textContent = "▾ Collapse";
     h3.appendChild(toggle);
-    h3.classList.add("collapsible");
-    h3.addEventListener("click", () => {
-      const collapsed = body.style.display === "none";
-      body.style.display = collapsed ? "" : "none";
-      toggle.textContent = collapsed ? "▾" : "▸";
-    });
+
+    const setState = collapsed => {
+      body.style.display = collapsed ? "none" : "";
+      toggle.textContent = collapsed ? "▸ Expand" : "▾ Collapse";
+    };
+    toggle.addEventListener("click", () => setState(body.style.display !== "none"));
   });
 }
 
