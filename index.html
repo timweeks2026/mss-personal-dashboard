@@ -65,6 +65,47 @@
     border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer;
   }
   .btn-secondary:hover { background: #f1f4f8; }
+  .btn-secondary:disabled, .btn-primary:disabled { opacity: 0.5; cursor: default; }
+  .btn-danger { font-size: 11.5px; padding: 4px 9px; border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--bad); cursor: pointer; }
+  .btn-danger:hover { background: #fdecea; }
+
+  /* ---- Retirement Plan tabs ---- */
+  .retire-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 980px) { .retire-grid { grid-template-columns: 1fr; } }
+  .edit-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  .edit-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .edit-table td { padding: 3px 6px; border-bottom: 1px solid #eef1f5; vertical-align: middle; }
+  .edit-table input[type="text"], .edit-table input[type="number"], .edit-table input[type="date"], .edit-table select {
+    width: 100%; box-sizing: border-box; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit;
+  }
+  .edit-table input[type="number"] { text-align: right; }
+  .edit-table td.num-col { width: 110px; }
+  .edit-table td.date-col { width: 130px; }
+  .edit-table td.action-col { width: 40px; text-align: center; }
+  .edit-table tfoot td { font-weight: 700; border-top: 1px solid var(--border); border-bottom: none; padding-top: 6px; }
+  .add-row-btn { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 6px 4px; }
+  .add-row-btn:hover { text-decoration: underline; }
+  .retire-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
+  .retire-card h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0 0 4px; }
+  .retire-card .card-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
+  .save-indicator { font-size: 11.5px; color: var(--muted); margin-left: 10px; }
+  .save-indicator.saving { color: var(--accent); }
+  .save-indicator.error { color: var(--bad); }
+  .lock-banner { padding: 8px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600; margin-bottom: 12px; }
+  .lock-banner.locked { background: #e6f4ea; color: var(--good); }
+  .lock-banner.unlocked { background: #fff8e1; color: #7a5b00; }
+  .scoreboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+  .score-tile { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .score-tile .st-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+  .score-tile .st-pct { font-size: 20px; font-weight: 800; margin-top: 2px; }
+  .score-tile .st-detail { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .score-bar-track { height: 6px; background: #eef1f5; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .score-bar-fill { height: 100%; background: var(--accent); }
+  .score-bar-fill.good { background: var(--good); }
+  .rec-item { background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; }
+  .rec-item.rec-shortfall { border-left-color: var(--bad); }
+  .rec-item .rec-title { font-weight: 700; }
+  .rec-item .rec-detail { color: var(--muted); margin-top: 2px; }
 
   .radio-group { display: flex; gap: 12px; }
   .radio-group label {
@@ -290,6 +331,8 @@
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
   <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
+  <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
+  <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
 </nav>
 
 <div id="status">Loading…</div>
@@ -413,6 +456,78 @@
       </div>
       <div id="bizlinesFlag" style="display:none;"></div>
       <div class="table-wrap"><table id="bizlinesTable"></table></div>
+    </section>
+  </div>
+
+  <div id="panel-retireyear" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Retirement Plan — Year View</h2>
+      <div class="section-sub">Plan and track this year's funding priorities. Editable — changes save automatically.</div>
+      <div class="inline-control">
+        <label for="retireYearSelect">Year</label>
+        <select id="retireYearSelect"></select>
+        <button type="button" id="retireAddYearBtn" class="btn-secondary" style="margin-left:10px;">+ Add Year</button>
+        <span class="save-indicator" id="retireSaveIndicator"></span>
+      </div>
+      <div id="retireLockBanner" class="lock-banner"></div>
+
+      <div class="retire-card">
+        <h3>Available Cash</h3>
+        <div class="card-sub">Cash sources for this year's plan, each with the date it becomes available.</div>
+        <table class="edit-table" id="cashSourcesTable"></table>
+        <button type="button" class="add-row-btn" id="addCashSourceBtn">+ Add cash source</button>
+      </div>
+
+      <div class="retire-card">
+        <h3>Funding Priorities</h3>
+        <div class="card-sub">Lower priority number = funded first. "Funded" is tracked manually as you actually pay/fund each goal.</div>
+        <table class="edit-table" id="goalsTable"></table>
+        <button type="button" class="add-row-btn" id="addGoalBtn">+ Add goal</button>
+      </div>
+
+      <div class="retire-card">
+        <h3>Recommendations</h3>
+        <div class="card-sub">Priority-waterfall allocation of available cash across unfunded goals.</div>
+        <button type="button" id="generateRecBtn" class="btn-primary">Generate 5 Recommendations</button>
+        <div id="recommendationsList" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="retire-card">
+        <h3>Annual Scoreboard</h3>
+        <div class="card-sub" id="scoreboardSub"></div>
+        <div class="scoreboard-grid" id="scoreboardGrid"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="panel-retire12" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Retirement Plan — 12-Year Projection</h2>
+      <div class="section-sub">Locked years use the locked plan's actual funding amounts; unlocked years fall back to this year's target or the assumption below.</div>
+
+      <div class="retire-grid">
+        <div class="retire-card">
+          <h3>Investment Accounts</h3>
+          <div class="card-sub">Growth rate compounds annually — new contributions get the full year's rate, the prior balance gets half (matches the original retirement sheet's convention).</div>
+          <table class="edit-table" id="investAccountsTable"></table>
+          <button type="button" class="add-row-btn" id="addInvestBtn">+ Add investment account</button>
+        </div>
+        <div class="retire-card">
+          <h3>Loan Accounts</h3>
+          <div class="card-sub">Standard amortization from the current balance, rate, and annual payment.</div>
+          <table class="edit-table" id="loanAccountsTable"></table>
+          <button type="button" class="add-row-btn" id="addLoanBtn">+ Add loan account</button>
+        </div>
+      </div>
+
+      <div class="retire-card">
+        <h3>Other Recurring Costs</h3>
+        <div class="card-sub">Flat annual amount applied across the whole projection window.</div>
+        <table class="edit-table" id="otherCostsTable"></table>
+        <button type="button" class="add-row-btn" id="addOtherCostBtn">+ Add cost</button>
+      </div>
+
+      <div class="table-wrap"><table id="retire12Table"></table></div>
     </section>
   </div>
 </main>
@@ -565,6 +680,9 @@ async function loadData() {
   btn.disabled = true;
   setStatus("Loading live data from Google Sheets…");
   fetchAllAnalysis().then(render).catch(() => {}); // in parallel; re-renders once the shared history arrives
+  // Retirement Plan tabs are a fully separate data domain (no Google Sheets
+  // dependency) so they render independently of the P&L data load above.
+  fetchRetirementData().then(() => { renderRetireYearTab(); renderRetire12Tab(); }).catch(() => {});
   try {
     const [plText, bsText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -904,6 +1022,553 @@ function renderBusinessLines(companies) {
       renderBusinessLines(companies);
     });
   });
+}
+
+// =====================================================================
+// ---- Retirement Plan tabs (Year view + 12-Year projection) ----
+// Entirely separate data domain from the P&L/BS/CF tabs above: this is a
+// hand-maintained planning + tracking tool, not sourced from Google Sheets.
+// Persisted server-side (same Upstash-Redis-via-Vercel-serverless-function
+// pattern as Changes Analysis) as ONE mutable JSON document — not an
+// append-only version history, since this is a single evolving plan.
+// =====================================================================
+
+let retirementData = null;
+let retirementLoaded = false;
+let currentRetireYear = null;
+let retireSaveTimer = null;
+
+function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
+
+function defaultRetirementData() {
+  const startYear = new Date().getFullYear();
+  const firstYear = String(startYear);
+  return {
+    startYear,
+    endYear: startYear + 11,
+    goals: [
+      { id: uid("goal"), name: "HSA", priority: 1 },
+      { id: uid("goal"), name: "Self-Employment Taxes", priority: 1 },
+      { id: uid("goal"), name: "Income Taxes", priority: 1 },
+      { id: uid("goal"), name: "Solo 401K", priority: 2 },
+      { id: uid("goal"), name: "Payment on HELOC", priority: 3 },
+      { id: uid("goal"), name: "Backdoor Roth IRA", priority: 3 },
+      { id: uid("goal"), name: "Additional Payment on Home", priority: 4 },
+      { id: uid("goal"), name: "Brokerage", priority: 4 }
+    ],
+    investmentAccounts: [],
+    loanAccounts: [],
+    otherCosts: [],
+    years: {
+      [firstYear]: { cashSources: [], targets: {}, funded: {}, locked: false, lockedSnapshot: null, recommendations: [] }
+    }
+  };
+}
+
+function ensureYearData(year) {
+  const key = String(year);
+  if (!retirementData.years[key]) {
+    retirementData.years[key] = { cashSources: [], targets: {}, funded: {}, locked: false, lockedSnapshot: null, recommendations: [] };
+  }
+  const yd = retirementData.years[key];
+  if (!yd.targets) yd.targets = {};
+  if (!yd.funded) yd.funded = {};
+  if (!yd.cashSources) yd.cashSources = [];
+  if (!yd.recommendations) yd.recommendations = [];
+  return yd;
+}
+
+async function fetchRetirementData() {
+  try {
+    const resp = await fetch("/api/retirement", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const server = await resp.json();
+    retirementData = server || defaultRetirementData();
+  } catch (err) {
+    console.warn("Couldn't load retirement plan data: " + err.message);
+    retirementData = defaultRetirementData();
+  }
+  retirementLoaded = true;
+  const years = Object.keys(retirementData.years).sort();
+  currentRetireYear = years.includes(String(retirementData.startYear)) ? String(retirementData.startYear) : years[0];
+}
+
+function saveRetirementData() {
+  const ind = document.getElementById("retireSaveIndicator");
+  if (ind) { ind.textContent = "Saving…"; ind.className = "save-indicator saving"; }
+  clearTimeout(retireSaveTimer);
+  retireSaveTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch("/api/retirement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: retirementData })
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      if (ind) { ind.textContent = "Saved"; ind.className = "save-indicator"; }
+    } catch (err) {
+      if (ind) { ind.textContent = "Couldn't save: " + err.message; ind.className = "save-indicator error"; }
+    }
+  }, 500);
+}
+
+// ---- Priority-waterfall recommendation engine ----
+function computeRecommendations(year) {
+  const yd = ensureYearData(year);
+  const totalCash = (yd.cashSources || []).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const goalList = retirementData.goals.map(g => {
+    const target = Number(yd.targets[g.id]) || 0;
+    const funded = Number(yd.funded[g.id]) || 0;
+    return { id: g.id, name: g.name, priority: Number(g.priority) || 99, target, funded, unfunded: Math.max(0, target - funded) };
+  }).filter(g => g.unfunded > 0.005).sort((a, b) => a.priority - b.priority || b.unfunded - a.unfunded);
+
+  let remaining = totalCash;
+  const recs = [];
+  for (const g of goalList) {
+    if (recs.length >= 5) break;
+    if (remaining <= 0.005) { recs.push({ type: "shortfall", goal: g, amount: 0 }); continue; }
+    const alloc = Math.min(remaining, g.unfunded);
+    const full = alloc >= g.unfunded - 0.005;
+    recs.push({ type: full ? "full" : "partial", goal: g, amount: alloc });
+    remaining -= alloc;
+  }
+  return { recs, totalCash, remaining, goalsRemaining: goalList.length };
+}
+
+// ---- 12-year investment/loan projection ----
+// Contribution/payment for a given year: locked plan > current draft target
+// > the account's own default assumption (for years with no plan entry at
+// all yet, e.g. years further out than anything planned so far).
+function amountForYear(account, year) {
+  const yd = retirementData.years[String(year)];
+  if (account.linkedGoalId && yd) {
+    if (yd.locked && yd.lockedSnapshot && yd.lockedSnapshot.targets && yd.lockedSnapshot.targets[account.linkedGoalId] != null) {
+      return Number(yd.lockedSnapshot.targets[account.linkedGoalId]) || 0;
+    }
+    if (yd.targets && yd.targets[account.linkedGoalId] != null) {
+      return Number(yd.targets[account.linkedGoalId]) || 0;
+    }
+  }
+  return Number(account.defaultAnnualAmount) || 0;
+}
+
+function projectInvestments() {
+  const years = [];
+  for (let y = retirementData.startYear; y <= retirementData.endYear; y++) years.push(y);
+  return retirementData.investmentAccounts.map(acct => {
+    const rate = (Number(acct.growthPct) || 0) / 100;
+    const contributions = years.map(y => amountForYear(acct, y));
+    const balances = [];
+    let prior = Number(acct.startingBalance) || 0;
+    contributions.forEach(contrib => {
+      // Matches the original sheet's convention exactly (verified against
+      // its actual values): the new contribution gets the full annual rate
+      // and the prior balance gets half — i.e. contributions are modeled as
+      // happening at the START of the year and prior balance growth as
+      // averaged over the year, not the more typical mid-year-contribution
+      // convention. Keep this convention if this projection is ever
+      // reconciled against the original sheet again.
+      const bal = contrib * (1 + rate) + prior * (1 + rate / 2);
+      balances.push(bal);
+      prior = bal;
+    });
+    return { account: acct, years, contributions, balances };
+  });
+}
+
+function projectLoans() {
+  const years = [];
+  for (let y = retirementData.startYear; y <= retirementData.endYear; y++) years.push(y);
+  return retirementData.loanAccounts.map(acct => {
+    const rate = (Number(acct.ratePct) || 0) / 100;
+    const payments = years.map(y => amountForYear(acct, y));
+    const balances = [];
+    let prior = Number(acct.startingBalance) || 0;
+    payments.forEach(payment => {
+      const bal = Math.max(0, prior * (1 + rate) - payment);
+      balances.push(bal);
+      prior = bal;
+    });
+    return { account: acct, years, payments, balances };
+  });
+}
+
+// ---- Editable-table row helpers ----
+// Builds one <td> containing a labeled input, wired to write straight back
+// into `obj[field]` on every change and trigger a debounced save + optional
+// re-render (used when a change affects computed columns elsewhere).
+function editCell(obj, field, type, onChange) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = obj[field] == null ? "" : obj[field];
+  input.addEventListener("input", () => {
+    obj[field] = type === "number" ? (input.value === "" ? 0 : parseFloat(input.value)) : input.value;
+    saveRetirementData();
+    if (onChange) onChange();
+  });
+  td.appendChild(input);
+  return td;
+}
+
+function textCell(text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  return td;
+}
+
+function deleteCell(onClick) {
+  const td = document.createElement("td");
+  td.className = "action-col";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-danger";
+  btn.textContent = "✕";
+  btn.addEventListener("click", onClick);
+  td.appendChild(btn);
+  return td;
+}
+
+// ---- Year-view tab ----
+function renderRetireYearTab() {
+  if (!retirementLoaded) return;
+  const yearSel = document.getElementById("retireYearSelect");
+  const prevVal = yearSel.value;
+  yearSel.innerHTML = "";
+  Object.keys(retirementData.years).sort().forEach(y => yearSel.appendChild(new Option(y, y)));
+  if (prevVal && retirementData.years[prevVal]) yearSel.value = prevVal;
+  else if (currentRetireYear) yearSel.value = currentRetireYear;
+  currentRetireYear = yearSel.value;
+
+  const year = currentRetireYear;
+  const yd = ensureYearData(year);
+
+  const banner = document.getElementById("retireLockBanner");
+  if (yd.locked) {
+    banner.className = "lock-banner locked";
+    banner.textContent = `🔒 Plan locked (${yd.lockedSnapshot ? yd.lockedSnapshot.lockedAt : ""}). Feeds the 12-Year projection for ${year}.`;
+  } else {
+    banner.className = "lock-banner unlocked";
+    banner.textContent = `Not locked yet — the 12-Year projection is using this year's draft targets (or each account's default assumption) until you lock a plan.`;
+  }
+  banner.style.cursor = "pointer";
+  banner.onclick = () => {
+    if (yd.locked) {
+      yd.locked = false;
+    } else {
+      yd.locked = true;
+      yd.lockedSnapshot = { targets: { ...yd.targets }, lockedAt: new Date().toLocaleString() };
+    }
+    saveRetirementData();
+    renderRetireYearTab();
+  };
+
+  renderCashSourcesTable(yd);
+  renderGoalsTable(yd);
+  renderScoreboard(yd, year);
+}
+
+function renderCashSourcesTable(yd) {
+  const table = document.getElementById("cashSourcesTable");
+  table.innerHTML = "";
+  const thead = document.createElement("thead");
+  thead.innerHTML = "<tr><th>Source</th><th>Amount</th><th>Date Available</th><th></th></tr>";
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  let total = 0;
+  yd.cashSources.forEach((src, i) => {
+    total += Number(src.amount) || 0;
+    const tr = document.createElement("tr");
+    tr.appendChild(editCell(src, "name", "text"));
+    const amtTd = editCell(src, "amount", "number", () => renderRetireYearTab());
+    amtTd.className = "num-col";
+    tr.appendChild(amtTd);
+    const dateTd = editCell(src, "dateAvailable", "date");
+    dateTd.className = "date-col";
+    tr.appendChild(dateTd);
+    tr.appendChild(deleteCell(() => { yd.cashSources.splice(i, 1); saveRetirementData(); renderRetireYearTab(); }));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const tfoot = document.createElement("tfoot");
+  const ftr = document.createElement("tr");
+  ftr.appendChild(textCell("Total Available Cash"));
+  ftr.appendChild(textCell(fmtMoney(total)));
+  ftr.appendChild(textCell(""));
+  ftr.appendChild(textCell(""));
+  tfoot.appendChild(ftr);
+  table.appendChild(tfoot);
+}
+
+function renderGoalsTable(yd) {
+  const table = document.getElementById("goalsTable");
+  table.innerHTML = "";
+  const thead = document.createElement("thead");
+  thead.innerHTML = "<tr><th>Goal</th><th>Priority</th><th>Target</th><th>Funded</th><th>Unfunded</th><th>Funded %</th><th></th></tr>";
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  retirementData.goals.slice().sort((a, b) => (Number(a.priority) || 99) - (Number(b.priority) || 99)).forEach(goal => {
+    if (yd.targets[goal.id] == null) yd.targets[goal.id] = 0;
+    if (yd.funded[goal.id] == null) yd.funded[goal.id] = 0;
+    const target = Number(yd.targets[goal.id]) || 0;
+    const funded = Number(yd.funded[goal.id]) || 0;
+    const unfunded = Math.max(0, target - funded);
+    const pct = target > 0 ? (funded / target) * 100 : 0;
+
+    const tr = document.createElement("tr");
+    tr.appendChild(editCell(goal, "name", "text"));
+    const prTd = editCell(goal, "priority", "number", () => renderRetireYearTab());
+    prTd.className = "num-col";
+    tr.appendChild(prTd);
+
+    const targetTd = document.createElement("td");
+    targetTd.className = "num-col";
+    const targetInput = document.createElement("input");
+    targetInput.type = "number";
+    targetInput.value = target;
+    targetInput.addEventListener("input", () => {
+      yd.targets[goal.id] = targetInput.value === "" ? 0 : parseFloat(targetInput.value);
+      saveRetirementData();
+      renderGoalsTable(yd);
+      renderScoreboard(yd, currentRetireYear);
+    });
+    targetTd.appendChild(targetInput);
+    tr.appendChild(targetTd);
+
+    const fundedTd = document.createElement("td");
+    fundedTd.className = "num-col";
+    const fundedInput = document.createElement("input");
+    fundedInput.type = "number";
+    fundedInput.value = funded;
+    fundedInput.addEventListener("input", () => {
+      yd.funded[goal.id] = fundedInput.value === "" ? 0 : parseFloat(fundedInput.value);
+      saveRetirementData();
+      renderGoalsTable(yd);
+      renderScoreboard(yd, currentRetireYear);
+    });
+    fundedTd.appendChild(fundedInput);
+    tr.appendChild(fundedTd);
+
+    tr.appendChild(textCell(fmtMoney(unfunded), "num-col"));
+    tr.appendChild(textCell(fmtPct(pct / 100), "num-col"));
+    tr.appendChild(deleteCell(() => {
+      retirementData.goals = retirementData.goals.filter(g => g.id !== goal.id);
+      delete yd.targets[goal.id]; delete yd.funded[goal.id];
+      saveRetirementData(); renderRetireYearTab();
+    }));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+function renderScoreboard(yd, year) {
+  document.getElementById("scoreboardSub").textContent = yd.locked
+    ? `Progress vs. the plan locked on ${yd.lockedSnapshot.lockedAt}.`
+    : `Progress vs. this year's current draft targets (lock a plan for a fixed baseline).`;
+  const grid = document.getElementById("scoreboardGrid");
+  grid.innerHTML = "";
+
+  const baseline = yd.locked && yd.lockedSnapshot ? yd.lockedSnapshot.targets : yd.targets;
+  let totalTarget = 0, totalFunded = 0;
+  retirementData.goals.forEach(goal => {
+    const target = Number(baseline[goal.id]) || 0;
+    const funded = Number(yd.funded[goal.id]) || 0;
+    totalTarget += target;
+    totalFunded += funded;
+    grid.appendChild(scoreTile(goal.name, target, funded));
+  });
+  const overall = document.createElement("div");
+  overall.className = "score-tile";
+  overall.style.gridColumn = "1 / -1";
+  overall.style.background = "#eef2f7";
+  grid.insertBefore(scoreTileEl("Overall", totalTarget, totalFunded, true), grid.firstChild);
+}
+
+function scoreTile(label, target, funded) { return scoreTileEl(label, target, funded, false); }
+function scoreTileEl(label, target, funded, emphasize) {
+  const pct = target > 0 ? Math.min(100, (funded / target) * 100) : 0;
+  const div = document.createElement("div");
+  div.className = "score-tile";
+  if (emphasize) { div.style.gridColumn = "1 / -1"; div.style.background = "#eef2f7"; }
+  div.innerHTML = `
+    <div class="st-label">${escapeHtml(label)}</div>
+    <div class="st-pct">${pct.toFixed(0)}%</div>
+    <div class="st-detail">${fmtMoney(funded)} of ${fmtMoney(target)}</div>
+    <div class="score-bar-track"><div class="score-bar-fill${pct >= 100 ? " good" : ""}" style="width:${pct}%;"></div></div>
+  `;
+  return div;
+}
+
+function renderRecommendations() {
+  const { recs, totalCash, remaining, goalsRemaining } = computeRecommendations(currentRetireYear);
+  const el = document.getElementById("recommendationsList");
+  el.innerHTML = "";
+  if (!recs.length) {
+    el.innerHTML = '<div class="analysis-empty" style="padding:16px;">All goals fully funded for this year — nothing to recommend.</div>';
+    return;
+  }
+  recs.forEach(r => {
+    const div = document.createElement("div");
+    div.className = "rec-item" + (r.type === "shortfall" ? " rec-shortfall" : "");
+    if (r.type === "shortfall") {
+      div.innerHTML = `<div class="rec-title">Insufficient cash for ${escapeHtml(r.goal.name)} (Priority ${r.goal.priority})</div>` +
+        `<div class="rec-detail">${fmtMoney(r.goal.unfunded)} still needed — no available cash left after higher-priority goals.</div>`;
+    } else {
+      div.innerHTML = `<div class="rec-title">Fund ${fmtMoney(r.amount)} into ${escapeHtml(r.goal.name)} (Priority ${r.goal.priority})</div>` +
+        `<div class="rec-detail">${r.type === "full" ? "Fully covers" : "Partially covers"} this year's ${fmtMoney(r.goal.target)} target ` +
+        `(${escapeHtml(r.goal.name)} would be ${fmtPct(Math.min(1, (r.goal.funded + r.amount) / (r.goal.target || 1)))} funded).</div>`;
+    }
+    el.appendChild(div);
+  });
+  if (goalsRemaining > recs.length) {
+    const note = document.createElement("div");
+    note.className = "card-sub";
+    note.textContent = `+${goalsRemaining - recs.length} more unfunded goal(s) beyond the top 5 shown, ranked by priority.`;
+    el.appendChild(note);
+  }
+  const summary = document.createElement("div");
+  summary.className = "card-sub";
+  summary.textContent = `Available cash: ${fmtMoney(totalCash)} · Remaining after these recommendations: ${fmtMoney(Math.max(0, remaining))}`;
+  el.insertBefore(summary, el.firstChild);
+}
+
+// ---- 12-year tab ----
+function renderRetire12Tab() {
+  if (!retirementLoaded) return;
+  renderInvestAccountsTable();
+  renderLoanAccountsTable();
+  renderOtherCostsTable();
+  renderRetire12Table();
+}
+
+function goalOptionsHtml(selectedId) {
+  let html = `<option value="">— none —</option>`;
+  retirementData.goals.forEach(g => {
+    html += `<option value="${g.id}"${g.id === selectedId ? " selected" : ""}>${escapeHtml(g.name)}</option>`;
+  });
+  return html;
+}
+
+function linkedGoalCell(acct) {
+  const td = document.createElement("td");
+  const select = document.createElement("select");
+  select.innerHTML = goalOptionsHtml(acct.linkedGoalId);
+  select.addEventListener("change", () => {
+    acct.linkedGoalId = select.value || null;
+    saveRetirementData();
+    renderRetire12Table();
+  });
+  td.appendChild(select);
+  return td;
+}
+
+function renderInvestAccountsTable() {
+  const table = document.getElementById("investAccountsTable");
+  table.innerHTML = "";
+  table.innerHTML = "<thead><tr><th>Account</th><th>Growth %</th><th>Starting Balance</th><th>Default Contribution</th><th>Linked Goal</th><th></th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  retirementData.investmentAccounts.forEach((acct, i) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(editCell(acct, "name", "text"));
+    const g = editCell(acct, "growthPct", "number", () => renderRetire12Table()); g.className = "num-col"; tr.appendChild(g);
+    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table()); sb.className = "num-col"; tr.appendChild(sb);
+    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table()); da.className = "num-col"; tr.appendChild(da);
+    tr.appendChild(linkedGoalCell(acct));
+    tr.appendChild(deleteCell(() => { retirementData.investmentAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+function renderLoanAccountsTable() {
+  const table = document.getElementById("loanAccountsTable");
+  table.innerHTML = "";
+  table.innerHTML = "<thead><tr><th>Loan</th><th>Balance</th><th>Rate %</th><th>Default Payment</th><th>Linked Goal</th><th></th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  retirementData.loanAccounts.forEach((acct, i) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(editCell(acct, "name", "text"));
+    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table()); sb.className = "num-col"; tr.appendChild(sb);
+    const rt = editCell(acct, "ratePct", "number", () => renderRetire12Table()); rt.className = "num-col"; tr.appendChild(rt);
+    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table()); da.className = "num-col"; tr.appendChild(da);
+    tr.appendChild(linkedGoalCell(acct));
+    tr.appendChild(deleteCell(() => { retirementData.loanAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+function renderOtherCostsTable() {
+  const table = document.getElementById("otherCostsTable");
+  table.innerHTML = "";
+  table.innerHTML = "<thead><tr><th>Cost</th><th>Annual Amount</th><th></th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  retirementData.otherCosts.forEach((cost, i) => {
+    const tr = document.createElement("tr");
+    tr.appendChild(editCell(cost, "name", "text"));
+    const amt = editCell(cost, "annualAmount", "number", () => renderRetire12Table()); amt.className = "num-col"; tr.appendChild(amt);
+    tr.appendChild(deleteCell(() => { retirementData.otherCosts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+function renderRetire12Table() {
+  const table = document.getElementById("retire12Table");
+  table.innerHTML = "";
+  const years = [];
+  for (let y = retirementData.startYear; y <= retirementData.endYear; y++) years.push(y);
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(th("Line Item", "label-col"));
+  years.forEach(y => headRow.appendChild(th(String(y))));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  function row(label, values, cls) {
+    const cells = values.map(v => ({ text: typeof v === "number" ? fmtMoney(v) : v }));
+    tbody.appendChild(buildRow(cls || "detail", escapeHtml(label), cells));
+  }
+
+  const invProjections = projectInvestments();
+  const totalInvestmentValue = years.map(() => 0);
+  invProjections.forEach(p => {
+    row(p.account.name + " — Contribution", p.contributions);
+    row(p.account.name + " — Balance", p.balances, "summary-line");
+    p.balances.forEach((b, i) => totalInvestmentValue[i] += b);
+  });
+  if (invProjections.length) row("Total Investment Value", totalInvestmentValue, "grandtotal");
+
+  const loanProjections = projectLoans();
+  const totalLoanBalance = years.map(() => 0);
+  loanProjections.forEach(p => {
+    row(p.account.name + " — Payment", p.payments);
+    row(p.account.name + " — Balance", p.balances, "summary-line");
+    p.balances.forEach((b, i) => totalLoanBalance[i] += b);
+  });
+  if (loanProjections.length) row("Total Loan Balance", totalLoanBalance, "grandtotal");
+
+  const totalOtherCosts = years.map(() => 0);
+  retirementData.otherCosts.forEach(cost => {
+    const amt = Number(cost.annualAmount) || 0;
+    row(cost.name, years.map(() => amt));
+    years.forEach((y, i) => totalOtherCosts[i] += amt);
+  });
+
+  const totalCashNeeds = years.map((y, i) =>
+    invProjections.reduce((s, p) => s + p.contributions[i], 0) +
+    loanProjections.reduce((s, p) => s + p.payments[i], 0) +
+    totalOtherCosts[i]
+  );
+  row("Total Annual Cash Needs", totalCashNeeds, "summary-line");
+
+  const netWorth = years.map((y, i) => totalInvestmentValue[i] - totalLoanBalance[i]);
+  row("Net Worth (Investments − Loans)", netWorth, "grandtotal");
+
+  table.appendChild(tbody);
 }
 
 // Same shape as buildSection but keyed by BS Category rather than P&L Section.
@@ -2285,6 +2950,8 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
     document.getElementById("panel-cashflow").hidden = name !== "cashflow";
     document.getElementById("panel-bizlines").hidden = name !== "bizlines";
+    document.getElementById("panel-retireyear").hidden = name !== "retireyear";
+    document.getElementById("panel-retire12").hidden = name !== "retire12";
   });
 });
 
@@ -2294,6 +2961,43 @@ document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
+
+document.getElementById("retireYearSelect").addEventListener("change", renderRetireYearTab);
+document.getElementById("retireAddYearBtn").addEventListener("click", () => {
+  const years = Object.keys(retirementData.years).sort();
+  const nextYear = Number(years[years.length - 1]) + 1;
+  ensureYearData(nextYear);
+  if (nextYear > retirementData.endYear) retirementData.endYear = nextYear;
+  currentRetireYear = String(nextYear);
+  saveRetirementData();
+  renderRetireYearTab();
+});
+document.getElementById("addCashSourceBtn").addEventListener("click", () => {
+  ensureYearData(currentRetireYear).cashSources.push({ name: "New source", amount: 0, dateAvailable: "" });
+  saveRetirementData();
+  renderRetireYearTab();
+});
+document.getElementById("addGoalBtn").addEventListener("click", () => {
+  retirementData.goals.push({ id: uid("goal"), name: "New goal", priority: 5 });
+  saveRetirementData();
+  renderRetireYearTab();
+});
+document.getElementById("generateRecBtn").addEventListener("click", renderRecommendations);
+document.getElementById("addInvestBtn").addEventListener("click", () => {
+  retirementData.investmentAccounts.push({ id: uid("inv"), name: "New account", growthPct: 8, startingBalance: 0, defaultAnnualAmount: 0, linkedGoalId: null });
+  saveRetirementData();
+  renderRetire12Tab();
+});
+document.getElementById("addLoanBtn").addEventListener("click", () => {
+  retirementData.loanAccounts.push({ id: uid("loan"), name: "New loan", startingBalance: 0, ratePct: 0, defaultAnnualAmount: 0, linkedGoalId: null });
+  saveRetirementData();
+  renderRetire12Tab();
+});
+document.getElementById("addOtherCostBtn").addEventListener("click", () => {
+  retirementData.otherCosts.push({ id: uid("cost"), name: "New cost", annualAmount: 0 });
+  saveRetirementData();
+  renderRetire12Tab();
+});
 document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
   r.addEventListener("change", () => {
     scaleMode = document.querySelector('input[name="scaleMode"]:checked').value;
