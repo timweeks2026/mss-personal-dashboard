@@ -1255,22 +1255,52 @@ function withFocusPreserved(renderFn) {
   }
 }
 
+function fmtCurrencyInput(n) {
+  return "$" + (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+function parseCurrencyInput(str) {
+  if (str == null) return 0;
+  const n = parseFloat(String(str).replace(/[^0-9.\-]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
 // Builds one <td> containing a labeled input, wired to write straight back
 // into `obj[field]` on every change and trigger a debounced save + optional
 // re-render (used when a change affects computed columns elsewhere).
 // focusKey should be stable across re-renders (e.g. `${obj.id}_${field}`) —
 // NOT based on array index if rows can be deleted/reordered.
+//
+// type "currency" shows formatted "$X,XXX" when not focused and raw digits
+// while editing — live-reformatting on every keystroke was tried first but
+// makes cursor-position math fragile (inserting "$"/"," shifts offsets), so
+// this follows the standard pattern instead: format only on blur, when
+// there's no cursor position left to preserve. Because of that, currency
+// fields don't rebuild dependent computed columns (Unfunded, Funded %, the
+// totals row) until blur either — acceptable since re-render mid-typing was
+// the actual bug being fixed, not a feature to keep at all costs.
 function editCell(obj, field, type, onChange, focusKey) {
   const td = document.createElement("td");
   const input = document.createElement("input");
-  input.type = type;
-  input.value = obj[field] == null ? "" : obj[field];
+  if (type === "currency") {
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.value = fmtCurrencyInput(obj[field]);
+    input.addEventListener("focus", () => { input.value = obj[field] ? String(obj[field]) : ""; input.select(); });
+    input.addEventListener("input", () => { obj[field] = parseCurrencyInput(input.value); saveRetirementData(); });
+    input.addEventListener("blur", () => {
+      input.value = fmtCurrencyInput(obj[field]);
+      if (onChange) onChange();
+    });
+  } else {
+    input.type = type;
+    input.value = obj[field] == null ? "" : obj[field];
+    input.addEventListener("input", () => {
+      obj[field] = type === "number" ? (input.value === "" ? 0 : parseFloat(input.value)) : input.value;
+      saveRetirementData();
+      if (onChange) withFocusPreserved(onChange);
+    });
+  }
   if (focusKey) input.setAttribute("data-focus-key", focusKey);
-  input.addEventListener("input", () => {
-    obj[field] = type === "number" ? (input.value === "" ? 0 : parseFloat(input.value)) : input.value;
-    saveRetirementData();
-    if (onChange) withFocusPreserved(onChange);
-  });
   td.appendChild(input);
   return td;
 }
@@ -1345,7 +1375,7 @@ function renderCashSourcesTable(yd) {
     total += Number(src.amount) || 0;
     const tr = document.createElement("tr");
     tr.appendChild(editCell(src, "name", "text", null, `cash_${i}_name`));
-    const amtTd = editCell(src, "amount", "number", () => renderCashSourcesTable(yd), `cash_${i}_amount`);
+    const amtTd = editCell(src, "amount", "currency", () => renderCashSourcesTable(yd), `cash_${i}_amount`);
     amtTd.className = "num-col";
     tr.appendChild(amtTd);
     const dateTd = editCell(src, "dateAvailable", "date");
@@ -1388,32 +1418,18 @@ function renderGoalsTable(yd) {
     prTd.className = "num-col";
     tr.appendChild(prTd);
 
-    const targetTd = document.createElement("td");
+    // Getter/setter proxies let editCell's currency-input logic read/write
+    // straight into yd.targets/yd.funded (keyed by goal id) without a
+    // separate hand-rolled input — editCell's `obj[field] = v` just invokes
+    // the setter below.
+    const targetProxy = { get value() { return Number(yd.targets[goal.id]) || 0; }, set value(v) { yd.targets[goal.id] = v; } };
+    const targetTd = editCell(targetProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); }, `goal_${goal.id}_target`);
     targetTd.className = "num-col";
-    const targetInput = document.createElement("input");
-    targetInput.type = "number";
-    targetInput.value = target;
-    targetInput.setAttribute("data-focus-key", `goal_${goal.id}_target`);
-    targetInput.addEventListener("input", () => {
-      yd.targets[goal.id] = targetInput.value === "" ? 0 : parseFloat(targetInput.value);
-      saveRetirementData();
-      withFocusPreserved(() => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); });
-    });
-    targetTd.appendChild(targetInput);
     tr.appendChild(targetTd);
 
-    const fundedTd = document.createElement("td");
+    const fundedProxy = { get value() { return Number(yd.funded[goal.id]) || 0; }, set value(v) { yd.funded[goal.id] = v; } };
+    const fundedTd = editCell(fundedProxy, "value", "currency", () => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); }, `goal_${goal.id}_funded`);
     fundedTd.className = "num-col";
-    const fundedInput = document.createElement("input");
-    fundedInput.type = "number";
-    fundedInput.value = funded;
-    fundedInput.setAttribute("data-focus-key", `goal_${goal.id}_funded`);
-    fundedInput.addEventListener("input", () => {
-      yd.funded[goal.id] = fundedInput.value === "" ? 0 : parseFloat(fundedInput.value);
-      saveRetirementData();
-      withFocusPreserved(() => { renderGoalsTable(yd); renderScoreboard(yd, currentRetireYear); });
-    });
-    fundedTd.appendChild(fundedInput);
     tr.appendChild(fundedTd);
 
     tr.appendChild(textCell(fmtMoney(unfunded), "num-col"));
@@ -1426,6 +1442,25 @@ function renderGoalsTable(yd) {
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
+
+  const tfoot = document.createElement("tfoot");
+  let totalTarget = 0, totalFunded = 0;
+  retirementData.goals.forEach(goal => {
+    totalTarget += Number(yd.targets[goal.id]) || 0;
+    totalFunded += Number(yd.funded[goal.id]) || 0;
+  });
+  const totalUnfunded = Math.max(0, totalTarget - totalFunded);
+  const totalPct = totalTarget > 0 ? totalFunded / totalTarget : 0;
+  const ftr = document.createElement("tr");
+  ftr.appendChild(textCell("Total"));
+  ftr.appendChild(textCell(""));
+  ftr.appendChild(textCell(fmtMoney(totalTarget), "num-col"));
+  ftr.appendChild(textCell(fmtMoney(totalFunded), "num-col"));
+  ftr.appendChild(textCell(fmtMoney(totalUnfunded), "num-col"));
+  ftr.appendChild(textCell(fmtPct(totalPct), "num-col"));
+  ftr.appendChild(textCell(""));
+  tfoot.appendChild(ftr);
+  table.appendChild(tfoot);
 }
 
 function renderScoreboard(yd, year) {
@@ -1564,8 +1599,8 @@ function renderInvestAccountsTable() {
     const tr = document.createElement("tr");
     tr.appendChild(editCell(acct, "name", "text", null, `inv_${acct.id}_name`));
     const g = editCell(acct, "growthPct", "number", () => renderRetire12Table(), `inv_${acct.id}_growthPct`); g.className = "num-col"; tr.appendChild(g);
-    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table(), `inv_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
-    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table(), `inv_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
+    const sb = editCell(acct, "startingBalance", "currency", () => renderRetire12Table(), `inv_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
+    const da = editCell(acct, "defaultAnnualAmount", "currency", () => renderRetire12Table(), `inv_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
     tr.appendChild(linkedGoalCell(acct));
     tr.appendChild(deleteCell(() => { retirementData.investmentAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1581,9 +1616,9 @@ function renderLoanAccountsTable() {
   retirementData.loanAccounts.forEach((acct, i) => {
     const tr = document.createElement("tr");
     tr.appendChild(editCell(acct, "name", "text", null, `loan_${acct.id}_name`));
-    const sb = editCell(acct, "startingBalance", "number", () => renderRetire12Table(), `loan_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
+    const sb = editCell(acct, "startingBalance", "currency", () => renderRetire12Table(), `loan_${acct.id}_startingBalance`); sb.className = "num-col"; tr.appendChild(sb);
     const rt = editCell(acct, "ratePct", "number", () => renderRetire12Table(), `loan_${acct.id}_ratePct`); rt.className = "num-col"; tr.appendChild(rt);
-    const da = editCell(acct, "defaultAnnualAmount", "number", () => renderRetire12Table(), `loan_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
+    const da = editCell(acct, "defaultAnnualAmount", "currency", () => renderRetire12Table(), `loan_${acct.id}_defaultAnnualAmount`); da.className = "num-col"; tr.appendChild(da);
     tr.appendChild(linkedGoalCell(acct));
     tr.appendChild(deleteCell(() => { retirementData.loanAccounts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1599,7 +1634,7 @@ function renderOtherCostsTable() {
   retirementData.otherCosts.forEach((cost, i) => {
     const tr = document.createElement("tr");
     tr.appendChild(editCell(cost, "name", "text", null, `cost_${cost.id}_name`));
-    const amt = editCell(cost, "defaultAnnualAmount", "number", () => renderRetire12Table(), `cost_${cost.id}_defaultAnnualAmount`); amt.className = "num-col"; tr.appendChild(amt);
+    const amt = editCell(cost, "defaultAnnualAmount", "currency", () => renderRetire12Table(), `cost_${cost.id}_defaultAnnualAmount`); amt.className = "num-col"; tr.appendChild(amt);
     tr.appendChild(linkedGoalCell(cost));
     tr.appendChild(deleteCell(() => { retirementData.otherCosts.splice(i, 1); saveRetirementData(); renderRetire12Tab(); }));
     tbody.appendChild(tr);
@@ -1623,16 +1658,22 @@ function actualBalanceRow(acct, years, projectedBalances) {
   years.forEach((y, i) => {
     const td = document.createElement("td");
     const input = document.createElement("input");
-    input.type = "number";
-    input.placeholder = Math.round(projectedBalances[i]).toLocaleString("en-US");
-    input.value = acct.account.actualBalances[y] != null ? acct.account.actualBalances[y] : "";
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.placeholder = fmtCurrencyInput(projectedBalances[i]);
+    const hasActual = acct.account.actualBalances[y] != null;
+    input.value = hasActual ? fmtCurrencyInput(acct.account.actualBalances[y]) : "";
     input.style.cssText = "width:100%; box-sizing:border-box; text-align:right; font-size:11.5px; padding:3px 5px; border:1px solid var(--border); border-radius:4px; font-family:inherit;";
     input.setAttribute("data-focus-key", `actual_${acct.account.id}_${y}`);
+    input.addEventListener("focus", () => { input.value = hasActual ? String(acct.account.actualBalances[y]) : ""; input.select(); });
     input.addEventListener("input", () => {
       if (input.value === "") delete acct.account.actualBalances[y];
-      else acct.account.actualBalances[y] = parseFloat(input.value);
+      else acct.account.actualBalances[y] = parseCurrencyInput(input.value);
       saveRetirementData();
-      withFocusPreserved(() => renderRetire12Table());
+    });
+    input.addEventListener("blur", () => {
+      input.value = acct.account.actualBalances[y] != null ? fmtCurrencyInput(acct.account.actualBalances[y]) : "";
+      renderRetire12Table();
     });
     td.appendChild(input);
     tr.appendChild(td);
