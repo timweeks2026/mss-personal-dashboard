@@ -469,6 +469,7 @@
         <label for="retireYearSelect">Year</label>
         <select id="retireYearSelect"></select>
         <button type="button" id="retireAddYearBtn" class="btn-secondary" style="margin-left:10px;">+ Add Year</button>
+        <button type="button" id="retireResetBtn" class="btn-secondary" style="margin-left:6px;">Reset to Sheet Defaults</button>
         <span class="save-indicator" id="retireSaveIndicator"></span>
       </div>
       <div id="retireLockBanner" class="lock-banner"></div>
@@ -3071,6 +3072,14 @@ document.getElementById("retireAddYearBtn").addEventListener("click", () => {
   currentRetireYear = String(nextYear);
   saveRetirementData();
   renderRetireYearTab();
+});
+document.getElementById("retireResetBtn").addEventListener("click", () => {
+  if (!confirm("Reset ALL retirement plan data (goals, accounts, cash sources, locked plans, everything) back to the original Retirement Tracking sheet's starting values? This can't be undone.")) return;
+  retirementData = defaultRetirementData();
+  currentRetireYear = String(retirementData.startYear);
+  saveRetirementData();
+  renderRetireYearTab();
+  renderRetire12Tab();
 });
 document.getElementById("addCashSourceBtn").addEventListener("click", () => {
   ensureYearData(currentRetireYear).cashSources.push({ name: "New source", amount: 0, dateAvailable: "" });
