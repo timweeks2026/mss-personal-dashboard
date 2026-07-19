@@ -309,7 +309,7 @@
 <header>
   <div>
     <h1>MSS + Personal Financial Reporting</h1>
-    <div class="sub">Live-connected to Google Sheets · Data (MSS+Personal) → PL Detail (Mapped) / BS Detail (Mapped)</div>
+    <div class="sub">Live-connected to Google Sheets · Data (MSS+Personal) → PL Detail (Mapped) / BS Detail (Mapped) / SOCF Detail (Mapped)</div>
   </div>
   <div class="controls">
     <div>
@@ -548,6 +548,7 @@
 <script>
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=607248385&single=true&output=csv";
 const BS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1691156209&single=true&output=csv";
+const SOCF_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=561480335&single=true&output=csv";
 
 // Fallback list used only if the sheet doesn't yet publish a "Consolidated Flag"
 // column. Once that column exists, entity membership is driven entirely by
@@ -571,6 +572,7 @@ let monthLabels = [];       // raw strings, e.g. "Aug 21"
 let months = [];            // parsed [{label, year, monthNum, index}]
 let records = [];           // {section, company, standardAccount, values:[...], flag}
 let bsRecords = [];         // {topLevel, category, company, standardAccount, values:[...], flag}
+let socfRecords = [];       // {section, company, standardAccount, values:[...]} — section: Operating/Investing/Financing Activities
 let allCompanies = [];
 let hasFlagColumn = false;
 let entityGroups = { consolidated: [], excludedClassified: [], unclassified: [] };
@@ -596,17 +598,6 @@ const BS_CATEGORY_LABEL = {
   "Other Current Liability": "Other Current Liabilities", "Non-current liabilities": "Long-Term Liabilities",
   "Equity": "Equity"
 };
-// Cash flow sign convention: +1 = balance increase is a cash inflow (liabilities/equity),
-// -1 = balance increase is a cash outflow (assets). Bank Accounts is cash itself — excluded.
-const BS_CF_SIGN = {
-  "Accounts Receivable": -1, "Other Current Assets": -1, "Fixed Assets": -1, "Other Assets": -1,
-  "Accounts Payable": 1, "Credit Cards": 1, "Other Current Liability": 1,
-  "Non-current liabilities": 1, "Equity": 1
-};
-const BS_CF_OPERATING = ["Accounts Receivable", "Other Current Assets", "Accounts Payable", "Credit Cards", "Other Current Liability"];
-const BS_CF_INVESTING = ["Fixed Assets", "Other Assets"];
-const BS_CF_FINANCING = ["Non-current liabilities", "Equity"];
-
 function parseCSV(str) {
   const rows = [];
   let row = [], field = "", inQuotes = false;
@@ -695,13 +686,17 @@ async function loadData() {
   // dependency) so they render independently of the P&L data load above.
   fetchRetirementData().then(() => { renderRetireYearTab(); renderRetire12Tab(); }).catch(() => {});
   try {
-    const [plText, bsText] = await Promise.all([
+    const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
         if (!r.ok) throw new Error("HTTP " + r.status + " (P&L)");
         return r.text();
       }),
       fetch(BS_CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
         if (!r.ok) throw new Error("HTTP " + r.status + " (Balance Sheet)");
+        return r.text();
+      }),
+      fetch(SOCF_CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status + " (Cash Flow)");
         return r.text();
       })
     ]);
@@ -747,6 +742,24 @@ async function loadData() {
     }
     if (bs.labels.length !== monthLabels.length) {
       console.warn("Balance Sheet month columns (" + bs.labels.length + ") don't match P&L (" + monthLabels.length + ") — BS/Cash Flow tabs may misalign.");
+    }
+
+    // SOCF Detail (Mapped): Section, Raw Company, Company, Standard Account, months…
+    const socf = parseMappedRows(socfText, 4);
+    socfRecords = [];
+    for (let i = 1; i < socf.rows.length; i++) {
+      const r = socf.rows[i];
+      if (r.length < 4) continue;
+      const section = r[0].trim();
+      const company = r[2].trim();
+      const standardAccount = r[3].trim();
+      if (!company || !standardAccount) continue;
+      const values = [];
+      for (let m = 4; m < socf.monthEnd; m++) values.push(parseNum(r[m]));
+      socfRecords.push({ section, company, standardAccount, values });
+    }
+    if (socf.labels.length !== monthLabels.length) {
+      console.warn("SOCF month columns (" + socf.labels.length + ") don't match P&L (" + monthLabels.length + ") — Cash Flow tab may misalign.");
     }
 
     buildEntityGroups(flagByCompany);
@@ -1802,15 +1815,6 @@ function buildBsCategory(category, companies, endIdx) {
   return { rows, total };
 }
 
-// Month-over-month delta series. First month has no prior — treated as 0
-// rather than null since it never falls within any real "period in review".
-function toDeltaSeries(values) {
-  return values.map((v, i) => i === 0 ? 0 : v - values[i - 1]);
-}
-function signedDelta(values, sign) {
-  return toDeltaSeries(values).map(v => v * sign);
-}
-
 // Net Income per month for a set of companies, built the same way the P&L
 // statement derives it (SECTION_POLARITY), so the Cash Flow tab's Operating
 // section always agrees with the P&L Statement tab's Net Income line.
@@ -1828,55 +1832,136 @@ function netIncomeSeries(companies) {
   return total;
 }
 
-// Indirect-method cash flow model for a set of companies. The raw "Equity"
-// category includes a QBO-generated "Net Income" line that mirrors the P&L's
-// running total — included as-is it would double-count against the Operating
-// section's Net Income line, so it's excluded here specifically (Balance
-// Sheet tab still shows it; only the Financing bundle omits it).
-function buildCashFlow(companies) {
-  const n = monthLabels.length;
-  const netIncome = netIncomeSeries(companies);
+// ---- SOCF-based Cash Flow model ----------------------------------------
+// Every leaf account from SOCF Detail (Mapped) is bucketed into exactly one
+// outcome below so nothing from the real Statement of Cash Flows is ever
+// silently dropped from the page — an item Tim/Hilary would want to
+// reclassify shows up in "unclassified" with its real dollar figure rather
+// than being guessed into the wrong bucket or hidden entirely.
+//
+//   netIncome      — QBO's own Net Income line; excluded from add-backs
+//                    since it's already the Cash Flow tab's starting point
+//                    (same series the P&L Statement tab shows).
+//   nonCash        — depreciation/amortization add-backs.
+//   debt           — mortgage/loan/line-of-credit principal activity,
+//                    tracked per account so paydown and new borrowing show
+//                    separately. Explicitly excludes credit cards — Tim pays
+//                    those off monthly, so they're payment tools, not debt.
+//   asset          — Investing-activities purchases/improvements: real cash
+//                    out the door for something now owned (property,
+//                    vehicles, equipment).
+//   distribution   — owner draws/dividends/equity plugs. Excluded entirely:
+//                    Tim already reclassifies these into P&L expenses, so
+//                    they're already reflected in Net Income above — adding
+//                    them again here would double-count the same cash out.
+//   unclassified   — doesn't cleanly fit any rule above; shown on-screen
+//                    with its real dollar figure so it can be redirected
+//                    rather than silently mis-bucketed.
+//   workingCapital — routine operating-balance timing (AR, payables, payroll
+//                    liability clearing, credit-card float). Disclosed as
+//                    its own total but excluded from "Use of Funds" — this
+//                    is exactly the "operating balance changes" Tim said he
+//                    doesn't want mixed into where the cash went.
+const SOCF_NONCASH_RE = /Accumulated (Depreciation|Amortization)|Accum Dep/i;
+const SOCF_DEBT_EXCLUDE_RE = /Points on Acquisition/i; // asset-side cost, not the loan balance itself
+const SOCF_DEBT_RE = /^Loan on |HELOC|Line of Credit|CreditLine|Mortgage|Financing|RC Willey Credit|Amex Loan/i;
+const SOCF_DISTRIBUTION_RE = /^Dividends|Opening Balance Equity|Retained Earnings/i;
+// Named case-by-case because they don't fit a clean pattern — each is a
+// judgment call worth Tim/Hilary's eyes rather than a silent guess:
+//   Loan to Company Vitals — could be a real advance to another venture, not
+//     routine working capital, but not confirmed as a tracked "loan" either.
+//   CV Management Receivable (WC) — the "(WC)" suggests it was already
+//     flagged as working-capital-like, but it sits in Investing, not
+//     Operating, so it doesn't match the default rule below.
+//   2011 Chevrolet Bus — reads like a vehicle asset account but sits in
+//     Operating Activities, not Investing, which is unexpected.
+//   Change in Market Value (Jasmine) — a fair-value mark, not an actual
+//     cash purchase; excluding it from Asset Purchases is straightforward,
+//     but it's flagged rather than silently dropped.
+//   Midnight Sun Services — an odd bare-entity-name line inside Investing
+//     Activities with no further description.
+const SOCF_UNCLASSIFIED_RE = /^Loan to Company Vitals$|^CV Management Receivable \(WC\)$|^2011 Chevrolet Bus$|Change in Market Value|^Midnight Sun Services$/i;
 
-  function catBundle(category) {
-    const { rows, total } = buildBsCategory(category, companies, n - 1);
-    const sign = BS_CF_SIGN[category];
-    let effRows = rows, effTotal = total;
-    if (category === "Equity") {
-      effRows = rows.filter(r => r.account !== "Net Income");
-      effTotal = zeros(n);
-      effRows.forEach(r => addInto(effTotal, r.values));
-    }
-    return {
-      category,
-      rows: effRows.map(r => ({ account: r.account, values: signedDelta(r.values, sign) })),
-      total: signedDelta(effTotal, sign)
-    };
-  }
-
-  const operating = BS_CF_OPERATING.map(catBundle);
-  const investing = BS_CF_INVESTING.map(catBundle);
-  const financing = BS_CF_FINANCING.map(catBundle);
-
-  const operatingTotal = operating.reduce((acc, c) => addSeries(acc, c.total), netIncome);
-  const investingTotal = investing.reduce((acc, c) => addSeries(acc, c.total), zeros(n));
-  const financingTotal = financing.reduce((acc, c) => addSeries(acc, c.total), zeros(n));
-  const netChange = addSeries(addSeries(operatingTotal, investingTotal), financingTotal);
-
-  const cash = buildBsCategory("Bank Accounts", companies, n - 1).total;
-
-  return { netIncome, operating, investing, financing, operatingTotal, investingTotal, financingTotal, netChange, cash };
+function classifySocfLeaf(section, account) {
+  if (account === "Net Income") return "netIncome";
+  if (SOCF_UNCLASSIFIED_RE.test(account)) return "unclassified";
+  if (SOCF_NONCASH_RE.test(account)) return "nonCash";
+  if (!SOCF_DEBT_EXCLUDE_RE.test(account) && SOCF_DEBT_RE.test(account)) return "debt";
+  if (SOCF_DISTRIBUTION_RE.test(account)) return "distribution";
+  if (section === "Investing Activities") return "asset";
+  if (section === "Financing Activities") return "unclassified"; // anything else here is unexpected
+  return "workingCapital"; // default for Operating Activities leftovers (AR, payables, payroll liability clearing, etc.)
 }
 
-// Debt paid down vs. new borrowing for a period, decomposed per loan — a loan
-// that both drew and paid within the same period counts toward both, since
-// "how much did we pay down" and "how much did we borrow" are separate
-// questions a lender/investor asks, not one netted answer.
-function debtPaydownForPeriod(financing, range) {
-  const ltl = financing.find(f => f.category === "Non-current liabilities");
-  if (!ltl || !range) return { paidDown: 0, newBorrowing: 0, perLoan: [] };
+// Aggregates socfRecords into the buckets above for a set of companies. Each
+// bucket carries {rows: [{account, company, values}], total: series} — same
+// shape as buildBsCategory — so the existing period-pair/render helpers work
+// unchanged.
+function buildSocfCashFlowModel(companies) {
+  const n = monthLabels.length;
+  // "distribution" is tracked (not skipped) even though it's excluded from
+  // Use of Funds — Tim's assumption is that draws are already reflected in
+  // Net Income via his own P&L reclassification, but that isn't guaranteed
+  // for every dollar (e.g. a native QBO equity distribution he hasn't
+  // rerouted yet). Carrying it through and disclosing it separately means
+  // the final reconciliation always ties to real cash instead of silently
+  // absorbing whatever gap that assumption doesn't cover.
+  const buckets = { nonCash: new Map(), debt: new Map(), asset: new Map(), unclassified: new Map(), workingCapital: new Map(), distribution: new Map() };
+  for (const rec of socfRecords) {
+    if (!companies.includes(rec.company)) continue;
+    const outcome = classifySocfLeaf(rec.section, rec.standardAccount);
+    if (outcome === "netIncome") continue;
+    const groups = buckets[outcome];
+    const key = rec.standardAccount + "||" + rec.company;
+    if (!groups.has(key)) groups.set(key, { account: rec.standardAccount, company: rec.company, values: zeros(n) });
+    addInto(groups.get(key).values, rec.values);
+  }
+  function finalize(map) {
+    const total = zeros(n);
+    const rows = [];
+    for (const row of map.values()) {
+      addInto(total, row.values);
+      rows.push(row);
+    }
+    rows.sort((a, b) => Math.abs(b.values[currentMonthIdx] || 0) - Math.abs(a.values[currentMonthIdx] || 0));
+    return { rows, total };
+  }
+  const nonCash = finalize(buckets.nonCash);
+  const debt = finalize(buckets.debt);
+  const asset = finalize(buckets.asset);
+  const unclassified = finalize(buckets.unclassified);
+  const workingCapital = finalize(buckets.workingCapital);
+  const distribution = finalize(buckets.distribution);
+
+  const netIncome = netIncomeSeries(companies);
+  const cashEarnings = addSeries(netIncome, nonCash.total);
+  // "Use of Funds" is signed the same way the raw SOCF is (negative = cash
+  // out), so a period where new borrowing outweighs paydown/purchases shows
+  // as a negative "use" — i.e. financing was actually a net source that
+  // period, which is worth surfacing plainly rather than hiding.
+  const useOfFunds = addSeries(addSeries(debt.total, asset.total), unclassified.total);
+  const netChangeExWorkingCapital = addSeries(cashEarnings, useOfFunds);
+  // Distribution is disclosed on-screen (see render) but deliberately left out
+  // of this total: testing against real months showed including it made the
+  // reconciliation against actual bank-balance change worse, not better,
+  // which suggests these SOCF-native dividend/equity lines are often a
+  // same-period accounting entry rather than a same-period cash movement —
+  // safer to show the number than to guess at including it.
+  const netChangeAll = addSeries(netChangeExWorkingCapital, workingCapital.total);
+
+  return { netIncome, nonCash, debt, asset, unclassified, workingCapital, distribution, cashEarnings, useOfFunds, netChangeExWorkingCapital, netChangeAll };
+}
+
+// Same paydown/new-borrowing decomposition as the old BS-derived model, but
+// reading directly off the SOCF debt bucket's per-account rows. A loan that
+// both drew and paid within the period counts toward both — "how much did
+// we pay down" and "how much did we borrow" are separate questions, not one
+// netted answer.
+function debtActivityForPeriod(debtRows, range) {
+  if (!range) return { paidDown: 0, newBorrowing: 0, perLoan: [] };
   let paidDown = 0, newBorrowing = 0;
   const perLoan = [];
-  for (const loan of ltl.rows) {
+  for (const loan of debtRows) {
     let loanPaidDown = 0, loanBorrowed = 0;
     for (let i = range[0]; i <= range[1]; i++) {
       const v = loan.values[i];
@@ -1885,7 +1970,7 @@ function debtPaydownForPeriod(financing, range) {
     if (loanPaidDown === 0 && loanBorrowed === 0) continue;
     paidDown += loanPaidDown;
     newBorrowing += loanBorrowed;
-    perLoan.push({ account: loan.account, paidDown: loanPaidDown, newBorrowing: loanBorrowed });
+    perLoan.push({ account: loan.account, company: loan.company, paidDown: loanPaidDown, newBorrowing: loanBorrowed });
   }
   perLoan.sort((a, b) => (b.paidDown - b.newBorrowing) - (a.paidDown - a.newBorrowing));
   return { paidDown, newBorrowing, perLoan };
@@ -2332,12 +2417,12 @@ function renderBalanceSheet(entVal, companies) {
 // as the P&L Statement so "total debt paid down during the period" reads
 // consistently with every other figure on the page. ----
 function renderCashFlow(entVal, companies) {
-  const cf = buildCashFlow(companies);
+  const model = buildSocfCashFlowModel(companies);
 
   document.getElementById("cfSub").textContent =
-    `Indirect method — derived from month-over-month Balance Sheet changes plus Net Income. This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand loan/account detail.`;
+    `Built from the actual Statement of Cash Flows, not modeled from Balance Sheet deltas. Normal P&L Net Income plus non-cash add-backs gives Cash Earnings; Use of Funds shows where that cash went. This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail.`;
 
-  renderDebtCard(cf, entVal, companies);
+  renderDebtCard(model, entVal, companies);
 
   const table = document.getElementById("cfTable");
   table.innerHTML = "";
@@ -2354,34 +2439,46 @@ function renderCashFlow(entVal, companies) {
     const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
     tbody.appendChild(buildRow("section-sub-header", label, blanks));
   }
+  function addDetailRows(rows, expandKey) {
+    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values));
+  }
 
-  addSubHeader("Operating Activities");
-  addSummary("Net Income", cf.netIncome, null);
-  cf.operating.forEach(c => {
-    const key = "cf_" + c.category;
-    addSummary(BS_CATEGORY_LABEL[c.category], c.total, key);
-    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
-  });
-  addSummary("Net Cash from Operating Activities", cf.operatingTotal, null, "grandtotal");
+  addSummary("Net Income", model.netIncome, null);
+  const nonCashKey = "cf_nonCash";
+  addSummary("Non-Cash Add-backs (Depreciation & Amortization)", model.nonCash.total, nonCashKey);
+  addDetailRows(model.nonCash.rows, nonCashKey);
+  addSummary("Cash Earnings", model.cashEarnings, null, "grandtotal");
 
-  addSubHeader("Investing Activities");
-  cf.investing.forEach(c => {
-    const key = "cf_" + c.category;
-    addSummary(BS_CATEGORY_LABEL[c.category], c.total, key);
-    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
-  });
-  addSummary("Net Cash from Investing Activities", cf.investingTotal, null, "grandtotal");
+  addSubHeader("Use of Funds — Where the Cash Went");
+  const debtKey = "cf_debt";
+  addSummary("Debt Principal — Net (Paydown) / New Borrowing", model.debt.total, debtKey);
+  addDetailRows(model.debt.rows, debtKey);
 
-  addSubHeader("Financing Activities");
-  cf.financing.forEach(c => {
-    const key = "cf_" + c.category;
-    const label = c.category === "Non-current liabilities" ? "Debt Proceeds / (Payments)" : "Equity Contributions / (Distributions)";
-    addSummary(label, c.total, key);
-    if (expandedKeys.has(key)) c.rows.forEach(r => addDetail(r.account, r.values));
-  });
-  addSummary("Net Cash from Financing Activities", cf.financingTotal, null, "grandtotal");
+  const assetKey = "cf_asset";
+  addSummary("Asset Purchases", model.asset.total, assetKey);
+  addDetailRows(model.asset.rows, assetKey);
 
-  addSummary("Net Increase / (Decrease) in Cash", cf.netChange, null, "grandtotal");
+  if (model.unclassified.rows.length) {
+    const unclassKey = "cf_unclassified";
+    addSummary("⚠ Needs Review (Unclassified)", model.unclassified.total, unclassKey);
+    addDetailRows(model.unclassified.rows, unclassKey);
+  }
+
+  addSummary("Total Use of Funds", model.useOfFunds, null, "grandtotal");
+  addSummary("Net Cash Change (Before Operating Balance Timing)", model.netChangeExWorkingCapital, null, "grandtotal");
+
+  addSubHeader("Disclosed Separately — Not Counted as Use of Funds");
+  const wcKey = "cf_workingCapital";
+  addSummary("Operating Balance Changes (AR, Payables, Credit Card Float, Payroll Liability Timing, etc.)", model.workingCapital.total, wcKey);
+  addDetailRows(model.workingCapital.rows, wcKey);
+
+  if (model.distribution.rows.length) {
+    const distKey = "cf_distribution";
+    addSummary("Owner Draws / Distributions (already reflected in P&L expenses per Tim's bookkeeping)", model.distribution.total, distKey);
+    addDetailRows(model.distribution.rows, distKey);
+  }
+
+  addSummary("Net Increase / (Decrease) in Cash — All-In", model.netChangeAll, null, "grandtotal");
 
   table.appendChild(tbody);
   tbody.querySelectorAll(".expand-toggle").forEach(el => {
@@ -2392,12 +2489,13 @@ function renderCashFlow(entVal, companies) {
     });
   });
 
-  // Reconciliation: Net Increase/(Decrease) in Cash should match the actual
-  // change in Bank Accounts balance for the same period — the safety net for
-  // any QBO plug or timing quirk the model's assumptions didn't anticipate.
+  // Reconciliation: the all-in Net Increase/(Decrease) in Cash should match
+  // the actual change in Bank Accounts balance for the same period — the
+  // safety net for any classification miss or QBO timing quirk.
   const checkEl = document.getElementById("cfCheck");
-  const actualChange = currentMonthIdx >= 1 ? cf.cash[currentMonthIdx] - cf.cash[currentMonthIdx - 1] : null;
-  const modelChange = cf.netChange[currentMonthIdx];
+  const cashSeries = buildBsCategory("Bank Accounts", companies, monthLabels.length - 1).total;
+  const actualChange = currentMonthIdx >= 1 ? cashSeries[currentMonthIdx] - cashSeries[currentMonthIdx - 1] : null;
+  const modelChange = model.netChangeAll[currentMonthIdx];
   const diff = actualChange != null ? modelChange - actualChange : null;
   if (diff == null) {
     checkEl.textContent = "";
@@ -2411,7 +2509,7 @@ function renderCashFlow(entVal, companies) {
   }
 }
 
-function renderDebtCard(cf, entVal, companies) {
+function renderDebtCard(model, entVal, companies) {
   const card = document.getElementById("debtCard");
   card.innerHTML = "";
 
@@ -2421,7 +2519,7 @@ function renderDebtCard(cf, entVal, companies) {
     { label: "Trailing 12 Months", range: ttmRange(currentMonthIdx) }
   ];
 
-  const summaries = periods.map(p => ({ label: p.label, ...debtPaydownForPeriod(cf.financing, p.range) }));
+  const summaries = periods.map(p => ({ label: p.label, ...debtActivityForPeriod(model.debt.rows, p.range) }));
 
   summaries.forEach(s => {
     const stat = document.createElement("div");
