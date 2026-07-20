@@ -1314,6 +1314,79 @@ function buildExpenseGroupsForDisplay(sectionData) {
   };
 }
 
+// Debt-principal breakdown for the P&L Statement's "Recurring Debt Principal
+// Paid" section — mirrors the Budget tab's loan classification exactly (same
+// Auto/Cove/Jasmine/Ledges/Health categories, same Fixed/Variable tagging)
+// so a loan reads the same way on both tabs. Deliberately kept OUT of
+// Expenses/Net Income above: this is a new, separate section combined into
+// a new "Total Cash Result" bottom line, so "Net Income" keeps meaning
+// exactly what an accountant or QBO would show, while Total Cash Result
+// answers "how much cash actually left" (Tim's "accrual + cash basis" ask).
+function buildDebtPrincipalGroupsForDisplay(model) {
+  const n = monthLabels.length;
+  function debtKeyFor(r) { return typicalAccountKey("debt", r.account, r.company); }
+  function loanRegexCategory(account) {
+    if (AUTO_LOAN_RE.test(account)) return "auto";
+    if (COVE_LOAN_RE.test(account)) return "cove";
+    if (JASMINE_LOAN_RE.test(account)) return "jasmine";
+    if (LEDGES_LOAN_RE.test(account)) return "ledges";
+    return null;
+  }
+  function effectiveLoanCategory(r) { return categoryOf(debtKeyFor(r)) || loanRegexCategory(r.account); }
+
+  const activeLoanRows = model.debt.rows.filter(r => {
+    const s = typicalStatusOf(debtKeyFor(r));
+    return s !== "removed" && s !== "seasonal";
+  });
+
+  // SOCF principal is cash-flow-signed (negative = paid down) — flip to
+  // expense-style positive so "Total Cash Result" reads as a subtraction
+  // from Net Income, same convention as the Budget tab.
+  function group(label, rows) {
+    const series = zeros(n);
+    const memberRows = rows.map(r => {
+      const signed = r.values.map(v => -v);
+      addInto(series, signed);
+      return { account: r.account + " — " + r.company, values: signed };
+    });
+    return { label, series, rows: memberRows };
+  }
+
+  const namedCategoryGroups = Object.keys(BUDGET_CATEGORY_LABELS).map(catId => {
+    const rows = activeLoanRows.filter(r => effectiveLoanCategory(r) === catId);
+    return { id: catId, ...group(BUDGET_CATEGORY_LABELS[catId].replace("Expenses", "Debt Principal"), rows) };
+  }).filter(g => g.rows.length);
+
+  const uncategorized = activeLoanRows.filter(r => !effectiveLoanCategory(r));
+  const fixedRows = uncategorized.filter(r => fixedVarOf(debtKeyFor(r)) === "fixed");
+  const variableRows = uncategorized.filter(r => fixedVarOf(debtKeyFor(r)) === "variable");
+  const remaining = uncategorized.filter(r => !fixedVarOf(debtKeyFor(r)));
+  const installmentRemaining = remaining.filter(r => INSTALLMENT_DEBT_RE.test(r.account));
+  const revolvingRemaining = remaining.filter(r => !INSTALLMENT_DEBT_RE.test(r.account));
+
+  const fixedSubgroups = [...namedCategoryGroups, group("Other Fixed Debt Principal", fixedRows)].filter(g => g.rows.length);
+  const fixedSeries = zeros(n);
+  fixedSubgroups.forEach(g => addInto(fixedSeries, g.series));
+
+  const variableGroup = group("Variable Debt Principal", variableRows);
+  const remainingGroup = group("Other Loans", installmentRemaining);
+
+  const totalSeries = zeros(n);
+  [fixedSeries, variableGroup.series, remainingGroup.series].forEach(s => addInto(totalSeries, s));
+
+  // Revolving credit stays in its natural cash-flow sign and is informational
+  // only — same convention as the Budget tab: lumpy draws/paydowns aren't a
+  // steady recurring cost the way a mortgage or car payment is.
+  const revolvingSeries = zeros(n);
+  const revolvingRows = revolvingRemaining.map(r => { addInto(revolvingSeries, r.values); return { account: r.account + " — " + r.company, values: r.values }; });
+
+  return {
+    fixedParent: { label: "Recurring Debt Principal Paid", series: fixedSeries, subgroups: fixedSubgroups },
+    variableGroup, remainingGroup, totalSeries,
+    revolvingGroup: { label: "Revolving Credit Activity — Not Counted in Total Cash Result", series: revolvingSeries, rows: revolvingRows }
+  };
+}
+
 function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
 
 // Seeded from the original "Retirement Tracking" Google Sheet tab — this is
@@ -2391,7 +2464,7 @@ function render() {
     line.pctOfRevenue = { series: divSeries(line.series, revenue), num: line.series, den: revenue };
   });
 
-  renderStatement(summaryLines, sectionData);
+  renderStatement(summaryLines, sectionData, companies);
   renderCards(summaryLines);
   renderAnalysis(entVal, companies);
   renderCharts(companies, summaryLines);
@@ -2446,9 +2519,9 @@ function buildPeriodThead() {
   return thead;
 }
 
-function renderStatement(summaryLines, sectionData) {
+function renderStatement(summaryLines, sectionData, companies) {
   document.getElementById("statementSub").textContent =
-    `This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail.`;
+    `This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail. Net Income stays pure accrual; "Total Cash Result" below it adds recurring debt principal (a real cash cost that's never a P&L expense) for a blended accrual + cash view of what actually left the bank.`;
 
   const table = document.getElementById("plTable");
   table.innerHTML = "";
@@ -2480,11 +2553,18 @@ function renderStatement(summaryLines, sectionData) {
     row.dataset.key = collapseKey;
     tbody.appendChild(row);
   }
+  // Non-interactive divider — unlike addSubHeader, not clickable, since
+  // these two mark an always-shown section rather than gating a collapsible
+  // parent (there's nothing to toggle back).
+  function addPlainDivider(label) {
+    const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
+    tbody.appendChild(buildRow("section-sub-header", label, blanks));
+  }
   // Same shape as addSummaryRow, but for a Budget-tab-classified subgroup
   // (Auto/Cove/Jasmine/... or Fixed/Variable/Excluded) rather than a raw
   // P&L section — reuses the exact same This-Month/YTD/TTM cell building.
-  function addGroupRow(label, series, expandKey, rowClass) {
-    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), "neg", false);
+  function addGroupRow(label, series, expandKey, rowClass, polarity) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity || "neg", false);
     tbody.appendChild(buildRow(rowClass, labelWithChevron(label, expandKey), cells));
   }
 
@@ -2534,6 +2614,51 @@ function renderStatement(summaryLines, sectionData) {
       sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
     });
   });
+
+  // ---- Recurring Debt Principal Paid / Total Cash Result ----------------
+  // Net Income above is untouched, pure accrual. This section adds recurring
+  // loan principal (mortgages, car loans — real cash out the door, but never
+  // a P&L expense) using the exact same Auto/Cove/Jasmine/Ledges/Fixed/
+  // Variable classification as the Budget tab, then nets it against Net
+  // Income for a blended "Total Cash Result" — Tim's "combination of accrual
+  // and cash basis" ask. Revolving credit (HELOC, lines of credit) is shown
+  // for awareness but not counted, same convention as the Budget tab.
+  const netIncomeLine = summaryLines.find(l => l.key === "netIncome");
+  const debtModel = buildSocfCashFlowModel(companies);
+  const debtGroups = buildDebtPrincipalGroupsForDisplay(debtModel);
+  const hasDebtPrincipal = debtGroups.fixedParent.subgroups.length || debtGroups.variableGroup.rows.length || debtGroups.remainingGroup.rows.length;
+
+  if (hasDebtPrincipal) {
+    addPlainDivider("Recurring Debt Principal Paid — Not a P&L Expense");
+    if (debtGroups.fixedParent.subgroups.length) {
+      const fixedKey = "stmt_debtfixed";
+      addGroupRow(debtGroups.fixedParent.label, debtGroups.fixedParent.series, fixedKey, "summary-line");
+      if (expandedKeys.has(fixedKey)) {
+        debtGroups.fixedParent.subgroups.forEach(g => {
+          const gKey = "stmt_debtcat_" + (g.id || "general");
+          addGroupRow(g.label, g.series, gKey, "summary-line nested");
+          if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+        });
+      }
+    }
+    [debtGroups.variableGroup, debtGroups.remainingGroup].forEach(g => {
+      if (!g.rows.length) return;
+      const gKey = "stmt_debt_" + g.label.replace(/[^a-z0-9]+/gi, "_");
+      addGroupRow(g.label, g.series, gKey, "summary-line");
+      if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+    });
+    addGroupRow("Total Recurring Debt Principal", debtGroups.totalSeries, null, "summary-line", "neg");
+
+    const cashResultSeries = subSeries(netIncomeLine.series, debtGroups.totalSeries);
+    addGroupRow("Total Cash Result (Net Income − Debt Principal)", cashResultSeries, null, "grandtotal", "pos");
+
+    if (debtGroups.revolvingGroup.rows.length) {
+      addPlainDivider("Revolving Credit Activity — Not Counted Above (HELOC, Lines of Credit, etc.)");
+      const revKey = "stmt_debtrevolving";
+      addGroupRow(debtGroups.revolvingGroup.label, debtGroups.revolvingGroup.series, revKey, "summary-line");
+      if (expandedKeys.has(revKey)) debtGroups.revolvingGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+    }
+  }
 
   table.appendChild(tbody);
 
