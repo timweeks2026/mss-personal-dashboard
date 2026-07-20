@@ -68,6 +68,9 @@
   .btn-secondary:disabled, .btn-primary:disabled { opacity: 0.5; cursor: default; }
   .btn-danger { font-size: 11.5px; padding: 4px 9px; border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--bad); cursor: pointer; }
   .btn-danger:hover { background: #fdecea; }
+  td.row-actions { white-space: nowrap; }
+  td.row-actions button { margin-right: 5px; }
+  td.row-actions button:last-child { margin-right: 0; }
 
   /* ---- Retirement Plan tabs ---- */
   .retire-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
@@ -458,16 +461,7 @@
     <section>
       <h2 class="section-title">Typical Month</h2>
       <div class="section-sub" id="typicalSub"></div>
-      <div class="inline-control">
-        <label for="typicalWindowSelect">Averaging Window</label>
-        <select id="typicalWindowSelect">
-          <option value="3">Trailing 3 Months</option>
-          <option value="6">Trailing 6 Months</option>
-          <option value="12" selected>Trailing 12 Months</option>
-          <option value="36">Trailing 3 Years</option>
-          <option value="60">Trailing 5 Years</option>
-        </select>
-      </div>
+      <span class="save-indicator" id="typicalSaveIndicator"></span>
       <div class="table-wrap"><table id="typicalTable"></table></div>
     </section>
   </div>
@@ -709,6 +703,10 @@ async function loadData() {
   // Retirement Plan tabs are a fully separate data domain (no Google Sheets
   // dependency) so they render independently of the P&L data load above.
   fetchRetirementData().then(() => { renderRetireYearTab(); renderRetire12Tab(); }).catch(() => {});
+  // Typical Month overrides are also a separate data domain (per-account
+  // Remove/Seasonal choices) — fetch in parallel and re-render once loaded
+  // so the tab doesn't flash unclassified accounts before settling.
+  fetchTypicalOverrides().then(render).catch(() => {});
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -1085,6 +1083,96 @@ let retirementData = null;
 let retirementLoaded = false;
 let currentRetireYear = null;
 let retireSaveTimer = null;
+
+// ---- Typical Month per-account overrides (Remove / Seasonal) ----------
+// Persisted server-side (same single-mutable-document pattern as the
+// Retirement Plan) so the classification survives reloads and is shared
+// across devices. Keyed by a stable string built from where the account
+// lives — see typicalAccountKey().
+let typicalOverrides = {}; // key -> "removed" | "seasonal"
+let typicalOverridesLoaded = false;
+let typicalSaveTimer = null;
+
+async function fetchTypicalOverrides() {
+  try {
+    const resp = await fetch("/api/typical-overrides", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    typicalOverrides = (await resp.json()) || {};
+  } catch (err) {
+    console.warn("Couldn't load Typical Month overrides: " + err.message);
+    typicalOverrides = {};
+  }
+  typicalOverridesLoaded = true;
+}
+
+function saveTypicalOverrides() {
+  const ind = document.getElementById("typicalSaveIndicator");
+  if (ind) { ind.textContent = "Saving…"; ind.className = "save-indicator saving"; }
+  clearTimeout(typicalSaveTimer);
+  typicalSaveTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch("/api/typical-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: typicalOverrides })
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      if (ind) { ind.textContent = "Saved"; ind.className = "save-indicator"; }
+    } catch (err) {
+      if (ind) { ind.textContent = "Couldn't save: " + err.message; ind.className = "save-indicator error"; }
+    }
+  }, 500);
+}
+
+function typicalAccountKey(group, account, company) {
+  return group + "::" + account + "::" + (company || "");
+}
+
+// Each entry is { status: "removed"|"seasonal"|undefined, budget: number|undefined }.
+// status controls where/whether the account shows in the normal roll-up;
+// budget is the user's manually-typed target (falls back to the 12-Mo
+// average, shown as a placeholder-like starting value, until they edit it).
+function setTypicalStatus(key, status) {
+  const entry = typicalOverrides[key] || {};
+  if (status == null) delete entry.status; else entry.status = status;
+  if (entry.status == null && entry.budget == null) delete typicalOverrides[key];
+  else typicalOverrides[key] = entry;
+  saveTypicalOverrides();
+  render();
+}
+
+function setTypicalBudget(key, budget) {
+  const entry = typicalOverrides[key] || {};
+  entry.budget = budget;
+  typicalOverrides[key] = entry;
+  saveTypicalOverrides();
+}
+
+// Editable "Budget" <td> for a Typical Month row. defaultVal is the 12-Mo
+// average, used until the user types their own number. Re-render is scoped
+// to just the Typical Month tab (passed in as rerender) rather than the
+// whole app, since editing a budget only affects this tab's own roll-ups.
+function editBudgetCell(key, defaultVal, focusKey, rerender) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.inputMode = "decimal";
+  input.className = "currency-input";
+  function currentVal() {
+    const entry = typicalOverrides[key];
+    return entry && entry.budget != null ? entry.budget : defaultVal;
+  }
+  input.value = fmtCurrencyInput(currentVal());
+  input.addEventListener("focus", () => { const v = currentVal(); input.value = v ? String(Math.round(v)) : ""; input.select(); });
+  input.addEventListener("input", () => {
+    setTypicalBudget(key, parseCurrencyInput(input.value));
+    withFocusPreserved(rerender);
+  });
+  input.addEventListener("blur", () => { input.value = fmtCurrencyInput(currentVal()); });
+  input.setAttribute("data-focus-key", focusKey);
+  td.appendChild(input);
+  return td;
+}
 
 function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
 
@@ -2616,50 +2704,152 @@ function renderDebtCard(model, entVal, companies) {
 const INSTALLMENT_DEBT_RE = /^Loan on |Mortgage|Financing/i;
 
 function renderTypicalMonth(summaryLines, sectionData, companies) {
-  const windowSel = document.getElementById("typicalWindowSelect");
-  const windowMonths = parseInt(windowSel.value, 10);
   const endIdx = currentMonthIdx;
-  const startIdx = Math.max(0, endIdx - windowMonths + 1);
-  const actualMonths = endIdx - startIdx + 1;
-  function avg(series) { return trailingAverage(series, endIdx, actualMonths) || 0; }
+  const n = monthLabels.length;
+  function windowAvg(series, months) { return trailingAverage(series, endIdx, months); }
+  function default12mo(series) { return windowAvg(series, 12) || 0; }
+  function statusOf(key) { return typicalOverrides[key] && typicalOverrides[key].status; }
+  function budgetOf(key, series) {
+    const entry = typicalOverrides[key];
+    return entry && entry.budget != null ? entry.budget : default12mo(series);
+  }
 
   document.getElementById("typicalSub").textContent =
-    `Average monthly Revenue, Cost of Sales, and Expenses over the trailing ${actualMonths} month${actualMonths === 1 ? "" : "s"} ending ${months[endIdx].label}, plus recurring debt service (mortgages & auto loans) from the actual Statement of Cash Flows. Click ▸ to expand account detail. The bottom line is a candidate monthly budget target.`;
+    `Average monthly Revenue, Cost of Sales, and Expenses across several trailing windows, plus recurring debt service (mortgages & auto loans) from the actual Statement of Cash Flows. Set your own Budget per line — Annualized is Budget × 12. Click ▸ to expand account detail, ✕ Remove to drop a one-off from the analysis entirely, or → Seasonal to move a recurring-but-not-monthly item (like K1 income) to its own section below.`;
 
   const table = document.getElementById("typicalTable");
   table.innerHTML = "";
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   headRow.appendChild(th("Line Item", "label-col"));
-  headRow.appendChild(th("Typical Month"));
+  AVG_WINDOWS.forEach(w => headRow.appendChild(th(w.label)));
+  headRow.appendChild(th("Budget"));
   headRow.appendChild(th("Annualized (×12)"));
+  headRow.appendChild(th("Actions"));
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  function addRow(label, monthlyVal, rowClass, expandKey) {
-    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), [
-      { text: fmtMoney(monthlyVal) },
-      { text: fmtMoney(monthlyVal * 12) }
-    ]));
-  }
-  function addDetail(label, monthlyVal) {
-    tbody.appendChild(buildRow("detail", label, [
-      { text: fmtMoney(monthlyVal) },
-      { text: fmtMoney(monthlyVal * 12) }
-    ]));
+  const rerender = () => renderTypicalMonth(summaryLines, sectionData, companies);
+  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }]);
+
+  // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
+  // budget here is always a computed roll-up, never directly editable.
+  function addComputedRow(label, series, budgetVal, rowClass, expandKey) {
+    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "—" : fmtMoney(v) }; });
+    cells.push({ text: fmtMoney(budgetVal) });
+    cells.push({ text: fmtMoney(budgetVal * 12) });
+    const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells);
+    tr.appendChild(document.createElement("td"));
+    tbody.appendChild(tr);
   }
   function addSubHeader(label) {
-    tbody.appendChild(buildRow("section-sub-header", label, [{ text: "" }, { text: "" }]));
+    tbody.appendChild(buildRow("section-sub-header", label, blankExtraCells()));
   }
+  // Leaf account row — editable Budget, plus Remove/Seasonal/Restore actions.
+  function addDetailRow(key, label, series) {
+    const status = statusOf(key);
+    const tr = document.createElement("tr");
+    tr.className = "detail";
+    const labelTd = document.createElement("td");
+    labelTd.className = "label-col";
+    labelTd.textContent = label;
+    tr.appendChild(labelTd);
+    AVG_WINDOWS.forEach(w => {
+      const v = windowAvg(series, w.months);
+      const td = document.createElement("td");
+      td.textContent = v == null ? "—" : fmtMoney(v);
+      if (typeof v === "number" && v < 0) td.classList.add("neg");
+      tr.appendChild(td);
+    });
+    const def = default12mo(series);
+    tr.appendChild(editBudgetCell(key, def, key + "_budget", rerender));
+    const budgetVal = budgetOf(key, series);
+    const annTd = document.createElement("td");
+    annTd.textContent = fmtMoney(budgetVal * 12);
+    if (budgetVal < 0) annTd.classList.add("neg");
+    tr.appendChild(annTd);
+    const actionTd = document.createElement("td");
+    actionTd.className = "row-actions";
+    if (status === "seasonal" || status === "removed") {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button"; restoreBtn.className = "btn-secondary";
+      restoreBtn.textContent = "↩ Restore";
+      restoreBtn.addEventListener("click", () => setTypicalStatus(key, null));
+      actionTd.appendChild(restoreBtn);
+    } else {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button"; removeBtn.className = "btn-danger";
+      removeBtn.textContent = "✕ Remove";
+      removeBtn.addEventListener("click", () => setTypicalStatus(key, "removed"));
+      const seasonalBtn = document.createElement("button");
+      seasonalBtn.type = "button"; seasonalBtn.className = "btn-secondary";
+      seasonalBtn.textContent = "→ Seasonal";
+      seasonalBtn.addEventListener("click", () => setTypicalStatus(key, "seasonal"));
+      actionTd.appendChild(removeBtn);
+      actionTd.appendChild(seasonalBtn);
+    }
+    tr.appendChild(actionTd);
+    tbody.appendChild(tr);
+  }
+
+  // ---- P&L sections, adjusted to exclude Removed/Seasonal accounts -------
+  const PL_SECTION_KEYS = ["Income", "Cost of Goods Sold", "Expenses", "Other Income", "Other Expenses"];
+  function adjustedSectionSeries(sectionKey) {
+    const raw = sectionData[sectionKey].total.slice();
+    sectionData[sectionKey].rows.forEach(r => {
+      const key = typicalAccountKey("pl_" + sectionKey, r.account, null);
+      const status = statusOf(key);
+      if (status === "removed" || status === "seasonal") { for (let i = 0; i < n; i++) raw[i] -= r.values[i]; }
+    });
+    return raw;
+  }
+  function sectionBudgetSum(sectionKey) {
+    let sum = 0;
+    sectionData[sectionKey].rows.forEach(r => {
+      const key = typicalAccountKey("pl_" + sectionKey, r.account, null);
+      const status = statusOf(key);
+      if (status === "removed" || status === "seasonal") return;
+      sum += budgetOf(key, r.values);
+    });
+    return sum;
+  }
+
+  const adjRevenue = adjustedSectionSeries("Income");
+  const adjCos = adjustedSectionSeries("Cost of Goods Sold");
+  const adjExpenses = adjustedSectionSeries("Expenses");
+  const adjOtherIncome = adjustedSectionSeries("Other Income");
+  const adjOtherExpenses = adjustedSectionSeries("Other Expenses");
+  const adjGrossProfit = subSeries(adjRevenue, adjCos);
+  const adjOperatingIncome = subSeries(adjGrossProfit, adjExpenses);
+  const adjNonOperating = subSeries(adjOtherIncome, adjOtherExpenses);
+  const adjNetIncome = addSeries(adjOperatingIncome, adjNonOperating);
+
+  const budgetRevenue = sectionBudgetSum("Income");
+  const budgetCos = sectionBudgetSum("Cost of Goods Sold");
+  const budgetExpenses = sectionBudgetSum("Expenses");
+  const budgetOtherIncome = sectionBudgetSum("Other Income");
+  const budgetOtherExpenses = sectionBudgetSum("Other Expenses");
+  const budgetGrossProfit = budgetRevenue - budgetCos;
+  const budgetOperatingIncome = budgetGrossProfit - budgetExpenses;
+  const budgetNonOperating = budgetOtherIncome - budgetOtherExpenses;
+  const budgetNetIncome = budgetOperatingIncome + budgetNonOperating;
+
+  const SERIES_BY_KEY = { revenue: adjRevenue, cos: adjCos, grossProfit: adjGrossProfit, expenses: adjExpenses, operatingIncome: adjOperatingIncome, nonOperating: adjNonOperating, netIncome: adjNetIncome };
+  const BUDGET_BY_KEY = { revenue: budgetRevenue, cos: budgetCos, grossProfit: budgetGrossProfit, expenses: budgetExpenses, operatingIncome: budgetOperatingIncome, nonOperating: budgetNonOperating, netIncome: budgetNetIncome };
 
   summaryLines.forEach(line => {
     const key = "typ_" + line.key;
-    const val = avg(line.series);
-    addRow(line.label, val, line.key === "netIncome" ? "grandtotal" : "summary-line", line.expand ? key : null);
+    addComputedRow(line.label, SERIES_BY_KEY[line.key], BUDGET_BY_KEY[line.key], line.key === "netIncome" ? "grandtotal" : "summary-line", line.expand ? key : null);
     if (line.expand && expandedKeys.has(key)) {
       line.expand.forEach(sectionKey => {
-        sectionData[sectionKey].rows.forEach(r => addDetail(r.account, avg(r.values)));
+        if (line.expand.length > 1 && sectionDisplayLabel(sectionKey) !== line.label) addSubHeader(sectionDisplayLabel(sectionKey));
+        sectionData[sectionKey].rows.forEach(r => {
+          const rowKey = typicalAccountKey("pl_" + sectionKey, r.account, null);
+          const status = statusOf(rowKey);
+          if (status === "removed" || status === "seasonal") return; // shown in their own section instead
+          addDetailRow(rowKey, r.account, r.values);
+        });
       });
     }
   });
@@ -2673,22 +2863,79 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   addSubHeader("Recurring Debt Service — Mortgages & Auto Loans");
   const debtKey = "typ_debt";
-  let debtTotal = 0;
-  installment.forEach(r => { debtTotal += avg(r.values); });
-  addRow("Total Recurring Debt Service", debtTotal, "summary-line", debtKey);
-  if (expandedKeys.has(debtKey)) installment.forEach(r => addDetail(r.account + " — " + r.company, avg(r.values)));
+  let debtSeries = zeros(n), debtBudget = 0;
+  installment.forEach(r => {
+    const key = typicalAccountKey("debt", r.account, r.company);
+    if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
+    addInto(debtSeries, r.values);
+    debtBudget += budgetOf(key, r.values);
+  });
+  addComputedRow("Total Recurring Debt Service", debtSeries, debtBudget, "summary-line", debtKey);
+  if (expandedKeys.has(debtKey)) {
+    installment.forEach(r => {
+      const key = typicalAccountKey("debt", r.account, r.company);
+      if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
+      addDetailRow(key, r.account + " — " + r.company, r.values);
+    });
+  }
 
-  const netIncomeLine = summaryLines.find(l => l.key === "netIncome");
-  const typicalMonthlyCash = avg(netIncomeLine.series) + debtTotal; // debtTotal is already negative (paydown)
-  addRow("Typical Monthly Cash Available (Net Income − Debt Service)", typicalMonthlyCash, "grandtotal");
+  const typicalCashSeries = addSeries(adjNetIncome, debtSeries);
+  const typicalCashBudget = budgetNetIncome + debtBudget;
+  addComputedRow("Typical Monthly Cash Available (Net Income − Debt Service)", typicalCashSeries, typicalCashBudget, "grandtotal");
 
   if (revolving.length) {
     addSubHeader("Revolving Credit Activity — Not Counted Above (HELOC, Lines of Credit, etc.)");
     const revKey = "typ_revolving";
-    let revTotal = 0;
-    revolving.forEach(r => { revTotal += avg(r.values); });
-    addRow("Average Monthly Net Draw / (Paydown)", revTotal, "summary-line", revKey);
-    if (expandedKeys.has(revKey)) revolving.forEach(r => addDetail(r.account + " — " + r.company, avg(r.values)));
+    let revSeries = zeros(n), revBudget = 0;
+    revolving.forEach(r => {
+      const key = typicalAccountKey("debt", r.account, r.company);
+      if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
+      addInto(revSeries, r.values);
+      revBudget += budgetOf(key, r.values);
+    });
+    addComputedRow("Average Monthly Net Draw / (Paydown)", revSeries, revBudget, "summary-line", revKey);
+    if (expandedKeys.has(revKey)) {
+      revolving.forEach(r => {
+        const key = typicalAccountKey("debt", r.account, r.company);
+        if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
+        addDetailRow(key, r.account + " — " + r.company, r.values);
+      });
+    }
+  }
+
+  // ---- Every candidate account, for the Seasonal and Removed views below —
+  // built once so both sections can pull from the same universe regardless
+  // of whether the account lives in a P&L section or the debt model. ----
+  const allAccountRows = [];
+  PL_SECTION_KEYS.forEach(sectionKey => {
+    sectionData[sectionKey].rows.forEach(r => {
+      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values });
+    });
+  });
+  model.debt.rows.forEach(r => {
+    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values });
+  });
+
+  const seasonalRows = allAccountRows.filter(r => statusOf(r.key) === "seasonal");
+  if (seasonalRows.length) {
+    addSubHeader("Seasonal — Not Counted in Typical Monthly Cash Available");
+    let seasonalSeries = zeros(n), seasonalBudget = 0;
+    seasonalRows.forEach(r => {
+      addInto(seasonalSeries, r.series);
+      seasonalBudget += budgetOf(r.key, r.series);
+      addDetailRow(r.key, r.label, r.series);
+    });
+    addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null);
+  }
+
+  const removedRows = allAccountRows.filter(r => statusOf(r.key) === "removed");
+  if (removedRows.length) {
+    const removedKey = "typ_removed";
+    addSubHeader(`Removed From Analysis (${removedRows.length}) — click to expand`);
+    const headerRow = tbody.lastElementChild;
+    headerRow.classList.add("expand-toggle");
+    headerRow.dataset.key = removedKey;
+    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series));
   }
 
   table.appendChild(tbody);
@@ -3391,7 +3638,6 @@ document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
-document.getElementById("typicalWindowSelect").addEventListener("change", render);
 
 document.getElementById("retireYearSelect").addEventListener("change", renderRetireYearTab);
 document.getElementById("retireAddYearBtn").addEventListener("click", () => {
