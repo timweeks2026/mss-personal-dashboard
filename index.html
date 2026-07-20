@@ -73,6 +73,7 @@
   td.row-actions button:last-child { margin-right: 0; }
   #typicalTable input.currency-input { text-align: right; width: 90px; }
   select.row-select { font-size: 11.5px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; }
+  input.merge-input { font-size: 11.5px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; width: 90px; }
 
   /* ---- Retirement Plan tabs ---- */
   .retire-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
@@ -342,7 +343,7 @@
   <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
-  <button class="tab-btn" data-tab="typical" type="button">Typical Month</button>
+  <button class="tab-btn" data-tab="typical" type="button">Budget</button>
   <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
   <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
   <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
@@ -461,7 +462,7 @@
 
   <div id="panel-typical" class="tab-panel" hidden>
     <section>
-      <h2 class="section-title">Typical Month</h2>
+      <h2 class="section-title">Budget</h2>
       <div class="section-sub" id="typicalSub"></div>
       <span class="save-indicator" id="typicalSaveIndicator"></span>
       <div class="table-wrap"><table id="typicalTable"></table></div>
@@ -1218,6 +1219,30 @@ function selectCell(value, options, onChange) {
   });
   sel.addEventListener("change", () => onChange(sel.value || null));
   td.appendChild(sel);
+  return td;
+}
+
+// "Merge As" — typing the same label into 2+ accounts combines them into one
+// displayed row (e.g. "Telephone" + "Telephone Expense" -> one "Telephone"
+// line) before any Fixed/Variable/Category classification happens.
+function mergeAsOf(key) { return typicalOverrides[key] && typicalOverrides[key].mergeAs; }
+function setTypicalMergeAs(key, mergeAs) {
+  const entry = typicalOverrides[key] || {};
+  if (!mergeAs) delete entry.mergeAs; else entry.mergeAs = mergeAs;
+  typicalOverrides[key] = entry;
+  saveTypicalOverrides();
+  render();
+}
+function editTextCell(key, currentVal, placeholder, focusKey, rerender) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "merge-input";
+  input.placeholder = placeholder;
+  input.value = currentVal || "";
+  input.addEventListener("input", () => { setTypicalMergeAs(key, input.value.trim()); withFocusPreserved(rerender); });
+  input.setAttribute("data-focus-key", focusKey);
+  td.appendChild(input);
   return td;
 }
 
@@ -2791,6 +2816,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   AVG_WINDOWS.forEach(w => headRow.appendChild(th(w.label)));
   headRow.appendChild(th("Budget"));
   headRow.appendChild(th("Annualized (×12)"));
+  headRow.appendChild(th("Merge As"));
   headRow.appendChild(th("Category"));
   headRow.appendChild(th("Type"));
   headRow.appendChild(th("Actions"));
@@ -2799,7 +2825,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   const tbody = document.createElement("tbody");
   const rerender = () => renderTypicalMonth(summaryLines, sectionData, companies);
-  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
+  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
 
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
   // budget here is always a computed roll-up, never directly editable.
@@ -2808,6 +2834,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     cells.push({ text: fmtWhole(budgetVal) });
     cells.push({ text: fmtWhole(budgetVal * 12) });
     const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells);
+    tr.appendChild(document.createElement("td")); // Merge As
     tr.appendChild(document.createElement("td")); // Category
     tr.appendChild(document.createElement("td")); // Type
     tr.appendChild(document.createElement("td")); // Actions
@@ -2844,6 +2871,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     if (budgetVal < 0) annTd.classList.add("neg");
     tr.appendChild(annTd);
     if (opts.classifiable) {
+      tr.appendChild(editTextCell(key, mergeAsOf(key), label, key + "_merge", rerender));
       tr.appendChild(selectCell(categoryOf(key), [
         { value: "", label: "—" }, { value: "auto", label: "Auto" }, { value: "cove", label: "Cove" },
         { value: "jasmine", label: "Jasmine" }, { value: "ledges", label: "Ledges" }
@@ -2852,6 +2880,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
         { value: "", label: "—" }, { value: "fixed", label: "Fixed" }, { value: "variable", label: "Variable" }
       ], v => setTypicalFixedVar(key, v)));
     } else {
+      tr.appendChild(document.createElement("td"));
       tr.appendChild(document.createElement("td"));
       tr.appendChild(document.createElement("td"));
     }
@@ -2917,10 +2946,21 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   function expenseKey(r) { return typicalAccountKey("pl_Expenses", r.account, null); }
   function debtKeyFor(r) { return typicalAccountKey("debt", r.account, r.company); }
 
-  const plExpenseRows = sectionData["Expenses"].rows.filter(r => {
+  const rawExpenseRows = sectionData["Expenses"].rows.filter(r => {
     const s = statusOf(expenseKey(r));
     return s !== "removed" && s !== "seasonal";
   });
+  // Merge As: typing the same label into 2+ accounts (e.g. "Telephone" and
+  // "Telephone Expense", one per entity) combines them into one row under
+  // that label before any further classification — everything downstream
+  // (category, Fixed/Variable, budget) then operates on the merged identity.
+  const mergedExpenseGroups = new Map();
+  rawExpenseRows.forEach(r => {
+    const label = mergeAsOf(expenseKey(r)) || r.account;
+    if (!mergedExpenseGroups.has(label)) mergedExpenseGroups.set(label, zeros(n));
+    addInto(mergedExpenseGroups.get(label), r.values);
+  });
+  const plExpenseRows = [...mergedExpenseGroups.entries()].map(([account, values]) => ({ account, values }));
   // Loan principal rows are classifiable the same way P&L expense accounts
   // are: Auto/Cove/Jasmine/Ledges start pre-filled from the account name
   // (loanRegexCategory) but Tim/Hilary can override via the Category
