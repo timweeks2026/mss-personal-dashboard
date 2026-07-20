@@ -337,6 +337,7 @@
   <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
+  <button class="tab-btn" data-tab="typical" type="button">Typical Month</button>
   <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
   <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
   <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
@@ -450,6 +451,24 @@
       <div class="section-sub" id="cfSub"></div>
       <div class="table-wrap"><table id="cfTable"></table></div>
       <div id="cfCheck" class="balance-check"></div>
+    </section>
+  </div>
+
+  <div id="panel-typical" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Typical Month</h2>
+      <div class="section-sub" id="typicalSub"></div>
+      <div class="inline-control">
+        <label for="typicalWindowSelect">Averaging Window</label>
+        <select id="typicalWindowSelect">
+          <option value="3">Trailing 3 Months</option>
+          <option value="6">Trailing 6 Months</option>
+          <option value="12" selected>Trailing 12 Months</option>
+          <option value="36">Trailing 3 Years</option>
+          <option value="60">Trailing 5 Years</option>
+        </select>
+      </div>
+      <div class="table-wrap"><table id="typicalTable"></table></div>
     </section>
   </div>
 
@@ -624,7 +643,12 @@ function parseNum(s) {
   if (s === "") return 0;
   let neg = false;
   if (s.startsWith("(") && s.endsWith(")")) { neg = true; s = s.slice(1, -1); }
-  s = s.replace(/,/g, "").replace(/\$/g, "").trim();
+  // SOCF Detail (Mapped)'s published CSV renders negative currency as
+  // "-$ 1,234.56" — a literal space after the $ — unlike PL/BS Detail
+  // (Mapped)'s "-$1,234.56". parseFloat stops at that internal space and
+  // silently returns NaN, which this function then silently zeroed out.
+  // Stripping ALL whitespace (not just the trimmed edges) handles both.
+  s = s.replace(/,/g, "").replace(/\$/g, "").replace(/\s+/g, "");
   const n = parseFloat(s);
   if (isNaN(n)) return 0;
   return neg ? -n : n;
@@ -2145,6 +2169,7 @@ function render() {
   renderCharts(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
+  renderTypicalMonth(summaryLines, sectionData, companies);
   renderBusinessLines(companies);
 
   document.getElementById("footerNote").textContent =
@@ -2578,6 +2603,102 @@ function renderDebtCard(model, entVal, companies) {
     }
     card.appendChild(wrap);
   }
+}
+
+// ---- Typical Month (budget baseline) tab -------------------------------
+// Averages the P&L over a selectable trailing window to answer "what does a
+// normal month look like," then layers on the recurring debt service (SOCF
+// mortgage/auto-loan principal) that never shows up on a P&L — together
+// these give a number to set as a monthly budget target. Revolving credit
+// (HELOC, lines of credit) is shown for awareness but deliberately excluded
+// from the target itself: draws/paydowns there are lumpy by nature, not a
+// steady monthly obligation the way a mortgage or car payment is.
+const INSTALLMENT_DEBT_RE = /^Loan on |Mortgage|Financing/i;
+
+function renderTypicalMonth(summaryLines, sectionData, companies) {
+  const windowSel = document.getElementById("typicalWindowSelect");
+  const windowMonths = parseInt(windowSel.value, 10);
+  const endIdx = currentMonthIdx;
+  const startIdx = Math.max(0, endIdx - windowMonths + 1);
+  const actualMonths = endIdx - startIdx + 1;
+  function avg(series) { return trailingAverage(series, endIdx, actualMonths) || 0; }
+
+  document.getElementById("typicalSub").textContent =
+    `Average monthly Revenue, Cost of Sales, and Expenses over the trailing ${actualMonths} month${actualMonths === 1 ? "" : "s"} ending ${months[endIdx].label}, plus recurring debt service (mortgages & auto loans) from the actual Statement of Cash Flows. Click ▸ to expand account detail. The bottom line is a candidate monthly budget target.`;
+
+  const table = document.getElementById("typicalTable");
+  table.innerHTML = "";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(th("Line Item", "label-col"));
+  headRow.appendChild(th("Typical Month"));
+  headRow.appendChild(th("Annualized (×12)"));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  function addRow(label, monthlyVal, rowClass, expandKey) {
+    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), [
+      { text: fmtMoney(monthlyVal) },
+      { text: fmtMoney(monthlyVal * 12) }
+    ]));
+  }
+  function addDetail(label, monthlyVal) {
+    tbody.appendChild(buildRow("detail", label, [
+      { text: fmtMoney(monthlyVal) },
+      { text: fmtMoney(monthlyVal * 12) }
+    ]));
+  }
+  function addSubHeader(label) {
+    tbody.appendChild(buildRow("section-sub-header", label, [{ text: "" }, { text: "" }]));
+  }
+
+  summaryLines.forEach(line => {
+    const key = "typ_" + line.key;
+    const val = avg(line.series);
+    addRow(line.label, val, line.key === "netIncome" ? "grandtotal" : "summary-line", line.expand ? key : null);
+    if (line.expand && expandedKeys.has(key)) {
+      line.expand.forEach(sectionKey => {
+        sectionData[sectionKey].rows.forEach(r => addDetail(r.account, avg(r.values)));
+      });
+    }
+  });
+
+  // ---- Recurring debt service, from the same SOCF-based model as the Cash
+  // Flow tab, split into installment (steady monthly payment) vs. revolving
+  // (lumpy draws/paydowns not treated as a fixed monthly obligation). ----
+  const model = buildSocfCashFlowModel(companies);
+  const installment = model.debt.rows.filter(r => INSTALLMENT_DEBT_RE.test(r.account));
+  const revolving = model.debt.rows.filter(r => !INSTALLMENT_DEBT_RE.test(r.account));
+
+  addSubHeader("Recurring Debt Service — Mortgages & Auto Loans");
+  const debtKey = "typ_debt";
+  let debtTotal = 0;
+  installment.forEach(r => { debtTotal += avg(r.values); });
+  addRow("Total Recurring Debt Service", debtTotal, "summary-line", debtKey);
+  if (expandedKeys.has(debtKey)) installment.forEach(r => addDetail(r.account + " — " + r.company, avg(r.values)));
+
+  const netIncomeLine = summaryLines.find(l => l.key === "netIncome");
+  const typicalMonthlyCash = avg(netIncomeLine.series) + debtTotal; // debtTotal is already negative (paydown)
+  addRow("Typical Monthly Cash Available (Net Income − Debt Service)", typicalMonthlyCash, "grandtotal");
+
+  if (revolving.length) {
+    addSubHeader("Revolving Credit Activity — Not Counted Above (HELOC, Lines of Credit, etc.)");
+    const revKey = "typ_revolving";
+    let revTotal = 0;
+    revolving.forEach(r => { revTotal += avg(r.values); });
+    addRow("Average Monthly Net Draw / (Paydown)", revTotal, "summary-line", revKey);
+    if (expandedKeys.has(revKey)) revolving.forEach(r => addDetail(r.account + " — " + r.company, avg(r.values)));
+  }
+
+  table.appendChild(tbody);
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
 }
 
 // Card order deliberately differs from the table's top-to-bottom P&L order:
@@ -3257,6 +3378,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-charts").hidden = name !== "charts";
     document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
     document.getElementById("panel-cashflow").hidden = name !== "cashflow";
+    document.getElementById("panel-typical").hidden = name !== "typical";
     document.getElementById("panel-bizlines").hidden = name !== "bizlines";
     document.getElementById("panel-retireyear").hidden = name !== "retireyear";
     document.getElementById("panel-retire12").hidden = name !== "retire12";
@@ -3269,6 +3391,7 @@ document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
+document.getElementById("typicalWindowSelect").addEventListener("change", render);
 
 document.getElementById("retireYearSelect").addEventListener("change", renderRetireYearTab);
 document.getElementById("retireAddYearBtn").addEventListener("click", () => {
