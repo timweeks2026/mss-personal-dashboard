@@ -919,13 +919,19 @@ function buildSection(sectionKey, companies, endIdx) {
   }
   const total = zeros(n);
   const rows = [];
+  const allRows = [];
   for (const [account, values] of groups.entries()) {
     addInto(total, values);
+    allRows.push({ account, values });
     if (!hasRecentActivity(values, endIdx)) continue;
     rows.push({ account, values });
   }
   rows.sort((a, b) => a.account.localeCompare(b.account));
-  return { rows, total };
+  // allRows includes accounts with no activity in the trailing 12 months —
+  // needed by anything that must reconcile to `total` exactly across every
+  // period column (including prior-year columns, where a since-gone-quiet
+  // account can still have real history), not just the current window.
+  return { rows, total, allRows };
 }
 
 // ---- Business Lines tab: revenue-source view (CFO Consulting / Music /
@@ -1196,6 +1202,7 @@ function editBudgetCell(key, defaultVal, focusKey, rerender) {
 // Fixed/Variable and the 3 named property categories are only meaningful for
 // Expenses-section accounts, but stored in the same override entry as
 // status/budget since they're keyed the same way.
+function typicalStatusOf(key) { return typicalOverrides[key] && typicalOverrides[key].status; }
 function categoryOf(key) { return typicalOverrides[key] && typicalOverrides[key].category; }
 function fixedVarOf(key) { return typicalOverrides[key] && typicalOverrides[key].fixedVar; }
 function setTypicalCategory(key, category) {
@@ -1249,6 +1256,62 @@ function editTextCell(key, currentVal, placeholder, focusKey, rerender) {
   input.setAttribute("data-focus-key", focusKey);
   td.appendChild(input);
   return td;
+}
+
+const BUDGET_CATEGORY_LABELS = { auto: "Auto Expenses", cove: "Cove Expenses", jasmine: "Jasmine Expenses", ledges: "Ledges Expenses", health: "Health Expenses" };
+
+// Shared Expenses classification, used by BOTH the Budget tab and the P&L
+// Statement tab so an account's Category/Fixed-Variable/Merge/Remove choice
+// (made once, on the Budget tab) reads the same way everywhere. Unlike the
+// Budget tab's own grouping, this never folds in SOCF loan principal — the
+// P&L Statement is the real accounting record, and loan principal was never
+// a real P&L expense. It also always returns an "excluded" bucket for
+// Removed/Seasonal accounts instead of dropping them, because those still
+// have to land somewhere for historical Net Income to stay accurate.
+function buildExpenseGroupsForDisplay(sectionData) {
+  const n = monthLabels.length;
+  function expenseKey(account) { return typicalAccountKey("pl_Expenses", account, null); }
+
+  const allRows = sectionData["Expenses"].rows;
+  const activeRows = allRows.filter(r => { const s = typicalStatusOf(expenseKey(r.account)); return s !== "removed" && s !== "seasonal"; });
+  const excludedRows = allRows.filter(r => { const s = typicalStatusOf(expenseKey(r.account)); return s === "removed" || s === "seasonal"; });
+
+  // Merge As: same as the Budget tab — 2+ accounts sharing a typed label
+  // combine into one row before category/Fixed-Variable classification.
+  const mergedMap = new Map();
+  activeRows.forEach(r => {
+    const label = mergeAsOf(expenseKey(r.account)) || r.account;
+    if (!mergedMap.has(label)) mergedMap.set(label, zeros(n));
+    addInto(mergedMap.get(label), r.values);
+  });
+  const mergedRows = [...mergedMap.entries()].map(([account, values]) => ({ account, values }));
+
+  function group(label, rows) {
+    const series = zeros(n);
+    rows.forEach(r => addInto(series, r.values));
+    return { label, series, rows };
+  }
+
+  const namedCategoryGroups = Object.keys(BUDGET_CATEGORY_LABELS).map(catId => {
+    const rows = mergedRows.filter(r => categoryOf(expenseKey(r.account)) === catId);
+    return { id: catId, ...group(BUDGET_CATEGORY_LABELS[catId], rows) };
+  }).filter(g => g.rows.length);
+
+  const uncategorized = mergedRows.filter(r => !categoryOf(expenseKey(r.account)));
+  const fixedRows = uncategorized.filter(r => fixedVarOf(expenseKey(r.account)) === "fixed").sort((a, b) => a.account.localeCompare(b.account));
+  const variableRows = uncategorized.filter(r => fixedVarOf(expenseKey(r.account)) === "variable").sort((a, b) => a.account.localeCompare(b.account));
+  const untaggedRows = uncategorized.filter(r => !fixedVarOf(expenseKey(r.account))).sort((a, b) => a.account.localeCompare(b.account));
+
+  const fixedSubgroups = [...namedCategoryGroups, group("Other Fixed Expenses", fixedRows)].filter(g => g.rows.length);
+  const fixedSeries = zeros(n);
+  fixedSubgroups.forEach(g => addInto(fixedSeries, g.series));
+
+  return {
+    fixedParent: { label: "Fixed Expenses", series: fixedSeries, subgroups: fixedSubgroups },
+    variableGroup: group("Variable Expenses", variableRows),
+    untaggedGroup: group("Uncategorized Expenses", untaggedRows),
+    excludedGroup: group("Excluded From Budget Categorization (Removed/Seasonal)", excludedRows)
+  };
 }
 
 function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
@@ -2417,22 +2480,59 @@ function renderStatement(summaryLines, sectionData) {
     row.dataset.key = collapseKey;
     tbody.appendChild(row);
   }
+  // Same shape as addSummaryRow, but for a Budget-tab-classified subgroup
+  // (Auto/Cove/Jasmine/... or Fixed/Variable/Excluded) rather than a raw
+  // P&L section — reuses the exact same This-Month/YTD/TTM cell building.
+  function addGroupRow(label, series, expandKey, rowClass) {
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), "neg", false);
+    tbody.appendChild(buildRow(rowClass, labelWithChevron(label, expandKey), cells));
+  }
 
   summaryLines.forEach(line => {
     addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null);
     addPctRow(line.pctOfRevenue, line.polarity);
-    if (line.expand && expandedKeys.has(line.key)) {
-      line.expand.forEach(sectionKey => {
-        // Skip the sub-header when it would just repeat the parent row's own
-        // label (e.g. "Other Income" now displays as "Non-Operating Items",
-        // same as its parent) — showing it twice reads as broken, not helpful.
-        if (line.expand.length > 1 && sectionDisplayLabel(sectionKey) !== line.label) {
-          addSubHeader(sectionDisplayLabel(sectionKey), line.key);
+    if (!(line.expand && expandedKeys.has(line.key))) return;
+
+    // Expenses gets the same Auto/Cove/Jasmine/Ledges/Health + Fixed/
+    // Variable/Uncategorized breakdown as the Budget tab, built from the
+    // exact same account tags — so a classification made once applies to
+    // both reports. Unlike Budget, nothing is ever excluded from the real
+    // total here: Removed/Seasonal accounts land in their own "Excluded"
+    // bucket instead of vanishing, and no SOCF loan principal is folded in,
+    // since that was never a real P&L expense — both would otherwise change
+    // historical Net Income, which must stay exactly what it really was.
+    if (line.key === "expenses") {
+      const groups = buildExpenseGroupsForDisplay(sectionData);
+      if (groups.fixedParent.subgroups.length) {
+        const fixedKey = "stmt_expfixed";
+        addGroupRow(groups.fixedParent.label, groups.fixedParent.series, fixedKey, "summary-line");
+        if (expandedKeys.has(fixedKey)) {
+          groups.fixedParent.subgroups.forEach(g => {
+            const gKey = "stmt_expcat_" + (g.id || "general");
+            addGroupRow(g.label, g.series, gKey, "summary-line nested");
+            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+          });
         }
-        const pol = SECTION_POLARITY[sectionKey] || "pos";
-        sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
+      }
+      [groups.variableGroup, groups.untaggedGroup, groups.excludedGroup].forEach(g => {
+        if (!g.rows.length) return;
+        const gKey = "stmt_exp_" + g.label.replace(/[^a-z0-9]+/gi, "_");
+        addGroupRow(g.label, g.series, gKey, "summary-line");
+        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
       });
+      return;
     }
+
+    line.expand.forEach(sectionKey => {
+      // Skip the sub-header when it would just repeat the parent row's own
+      // label (e.g. "Other Income" now displays as "Non-Operating Items",
+      // same as its parent) — showing it twice reads as broken, not helpful.
+      if (line.expand.length > 1 && sectionDisplayLabel(sectionKey) !== line.label) {
+        addSubHeader(sectionDisplayLabel(sectionKey), line.key);
+      }
+      const pol = SECTION_POLARITY[sectionKey] || "pos";
+      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
+    });
   });
 
   table.appendChild(tbody);
