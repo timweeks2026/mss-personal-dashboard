@@ -585,8 +585,10 @@ const AVG_WINDOWS = [
   { key: "3mo", label: "3-Mo", months: 3 },
   { key: "6mo", label: "6-Mo", months: 6 },
   { key: "12mo", label: "12-Mo", months: 12 },
-  { key: "3yr", label: "3-Yr", months: 36 },
-  { key: "5yr", label: "5-Yr", months: 60 }
+  { key: "3yr", label: "3-Yr", months: 36 }
+  // 5-Yr removed: the data only goes back to Aug 2021, so a true 60-month
+  // window isn't available at any month-in-review before Aug 2026 — it
+  // would show N/A essentially always, not just as an edge case.
 ];
 
 let monthLabels = [];       // raw strings, e.g. "Aug 21"
@@ -2730,7 +2732,9 @@ function buildRow(rowClass, labelHtml, cells) {
 // Prior Year, plus trailing average balances over 5 windows. No favorable/
 // unfavorable coloring since "more assets" isn't inherently good or bad the
 // way P&L movement is. ----
-const BS_COL_LABELS = ["Balance", "Prior Month", "Prior Year", "3-Mo Avg", "6-Mo Avg", "12-Mo Avg", "3-Yr Avg", "5-Yr Avg"];
+// Derived from AVG_WINDOWS (not hardcoded) so this can never drift out of
+// sync with the actual number of trailing-average columns buildBsCells emits.
+const BS_COL_LABELS = ["Balance", "Prior Month", "Prior Year", ...AVG_WINDOWS.map(w => w.label + " Avg")];
 function buildBsCells(values, idx) {
   const current = values[idx];
   const priorMonth = idx >= 1 ? values[idx - 1] : null;
@@ -2742,7 +2746,7 @@ function buildBsCells(values, idx) {
   ];
   AVG_WINDOWS.forEach(w => {
     const avg = trailingAverage(values, idx, w.months);
-    cells.push({ text: avg != null ? fmtMoney(avg) : "—" });
+    cells.push({ text: avg != null ? fmtMoney(avg) : "N/A" });
   });
   return cells;
 }
@@ -3060,7 +3064,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
   // budget here is always a computed roll-up, never directly editable.
   function addComputedRow(label, series, budgetVal, rowClass, expandKey) {
-    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "—" : fmtWhole(v) }; });
+    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "N/A" : fmtWhole(v) }; });
     cells.push({ text: fmtWhole(budgetVal) });
     cells.push({ text: fmtWhole(budgetVal * 12) });
     const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells);
@@ -3089,7 +3093,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     AVG_WINDOWS.forEach(w => {
       const v = windowAvg(series, w.months);
       const td = document.createElement("td");
-      td.textContent = v == null ? "—" : fmtWhole(v);
+      td.textContent = v == null ? "N/A" : fmtWhole(v);
       if (typeof v === "number" && v < 0) td.classList.add("neg");
       tr.appendChild(td);
     });
