@@ -2765,6 +2765,7 @@ const INSTALLMENT_DEBT_RE = /^Loan on |Mortgage|Financing/i;
 const AUTO_LOAN_RE = /^Loan on (?!Ledges Townhome)/i;
 const COVE_LOAN_RE = /^Cove Mortgage/i;
 const JASMINE_LOAN_RE = /^Jasmine Mortgage/i;
+const LEDGES_LOAN_RE = /^Loan on Ledges Townhome/i;
 
 function renderTypicalMonth(summaryLines, sectionData, companies) {
   const endIdx = currentMonthIdx;
@@ -2816,7 +2817,9 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     tbody.appendChild(buildRow("section-sub-header", label, blankExtraCells()));
   }
   // Leaf account row — editable Budget, plus Remove/Seasonal/Restore actions.
-  // opts.expense adds the Category/Type selectors (Expenses P&L accounts only).
+  // opts.classifiable adds the Category/Type selectors — used for both
+  // Expenses P&L accounts and SOCF loan-principal rows, so either kind of
+  // line can be assigned to Auto/Cove/Jasmine/Ledges or tagged Fixed/Variable.
   function addDetailRow(key, label, series, opts) {
     opts = opts || {};
     const status = statusOf(key);
@@ -2840,10 +2843,10 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     annTd.textContent = fmtWhole(budgetVal * 12);
     if (budgetVal < 0) annTd.classList.add("neg");
     tr.appendChild(annTd);
-    if (opts.expense) {
+    if (opts.classifiable) {
       tr.appendChild(selectCell(categoryOf(key), [
-        { value: "", label: "—" }, { value: "auto", label: "Auto" },
-        { value: "cove", label: "Cove" }, { value: "jasmine", label: "Jasmine" }
+        { value: "", label: "—" }, { value: "auto", label: "Auto" }, { value: "cove", label: "Cove" },
+        { value: "jasmine", label: "Jasmine" }, { value: "ledges", label: "Ledges" }
       ], v => setTypicalCategory(key, v)));
       tr.appendChild(selectCell(fixedVarOf(key), [
         { value: "", label: "—" }, { value: "fixed", label: "Fixed" }, { value: "variable", label: "Variable" }
@@ -2918,10 +2921,28 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     const s = statusOf(expenseKey(r));
     return s !== "removed" && s !== "seasonal";
   });
-  const autoLoanRows = model.debt.rows.filter(r => AUTO_LOAN_RE.test(r.account));
-  const coveLoanRows = model.debt.rows.filter(r => COVE_LOAN_RE.test(r.account));
-  const jasmineLoanRows = model.debt.rows.filter(r => JASMINE_LOAN_RE.test(r.account));
-  const categorizedLoanAccounts = new Set([...autoLoanRows, ...coveLoanRows, ...jasmineLoanRows].map(r => r.account));
+  // Loan principal rows are classifiable the same way P&L expense accounts
+  // are: Auto/Cove/Jasmine/Ledges start pre-filled from the account name
+  // (loanRegexCategory) but Tim/Hilary can override via the Category
+  // selector — e.g. tagging NordicTrack Financing into a category, or
+  // reassigning one of the 4 pre-filled loans elsewhere.
+  function loanRegexCategory(account) {
+    if (AUTO_LOAN_RE.test(account)) return "auto";
+    if (COVE_LOAN_RE.test(account)) return "cove";
+    if (JASMINE_LOAN_RE.test(account)) return "jasmine";
+    if (LEDGES_LOAN_RE.test(account)) return "ledges";
+    return null;
+  }
+  function effectiveLoanCategory(r) { return categoryOf(debtKeyFor(r)) || loanRegexCategory(r.account); }
+  const activeLoanRows = model.debt.rows.filter(r => {
+    const s = statusOf(debtKeyFor(r));
+    return s !== "removed" && s !== "seasonal";
+  });
+  function loansForCategory(catId) { return activeLoanRows.filter(r => effectiveLoanCategory(r) === catId); }
+  const autoLoanRows = loansForCategory("auto");
+  const coveLoanRows = loansForCategory("cove");
+  const jasmineLoanRows = loansForCategory("jasmine");
+  const ledgesLoanRows = loansForCategory("ledges");
 
   function buildGroup(label, key, plRows, loanRows) {
     let series = zeros(n), budget = 0;
@@ -2929,35 +2950,55 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     plRows.forEach(r => {
       addInto(series, r.values);
       budget += budgetOf(expenseKey(r), r.values);
-      memberRows.push({ key: expenseKey(r), label: r.account, series: r.values, expense: true });
+      memberRows.push({ key: expenseKey(r), label: r.account, series: r.values, classifiable: true });
     });
     (loanRows || []).forEach(r => {
       const k = debtKeyFor(r);
       if (statusOf(k) === "removed" || statusOf(k) === "seasonal") return;
       // SOCF principal is cash-flow-signed (negative = paid down); flip it
       // to expense-style positive so it sums consistently with the P&L
-      // accounts above instead of subtracting from them.
+      // accounts above instead of subtracting from them. Kept even when
+      // currently $0 (e.g. Ledges has no recent payments) — it still shows
+      // real activity in the longer 3-Yr/5-Yr windows, which is the point.
       const expenseSigned = r.values.map(v => -v);
       addInto(series, expenseSigned);
       budget += budgetOf(k, expenseSigned);
-      memberRows.push({ key: k, label: r.account + " — " + r.company + " (loan principal)", series: expenseSigned, expense: false });
+      memberRows.push({ key: k, label: r.account + " — " + r.company + " (loan principal)", series: expenseSigned, classifiable: true });
     });
     return { label, key, series, budget, memberRows };
   }
 
-  const categoryGroups = [
+  // Auto/Cove/Jasmine/Ledges are all fixed, loan-tied property/asset costs —
+  // nested one level under "Fixed Expenses" alongside whatever else gets a
+  // plain Fixed tag, so the top-level Expenses split stays a clean
+  // Fixed / Variable / Uncategorized three-way.
+  const namedCategoryGroups = [
     buildGroup("Auto Expenses", "typ_expcat_auto", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "auto"), autoLoanRows),
     buildGroup("Cove Expenses", "typ_expcat_cove", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "cove"), coveLoanRows),
-    buildGroup("Jasmine Expenses", "typ_expcat_jasmine", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "jasmine"), jasmineLoanRows)
-  ];
+    buildGroup("Jasmine Expenses", "typ_expcat_jasmine", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "jasmine"), jasmineLoanRows),
+    buildGroup("Ledges Expenses", "typ_expcat_ledges", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "ledges"), ledgesLoanRows)
+  ].filter(g => g.memberRows.length);
   const uncategorizedPlRows = plExpenseRows.filter(r => !categoryOf(expenseKey(r)));
-  const fixedGroup = buildGroup("Fixed Expenses", "typ_expfixed", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "fixed").sort((a, b) => a.account.localeCompare(b.account)));
-  const variableGroup = buildGroup("Variable Expenses", "typ_expvariable", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "variable").sort((a, b) => a.account.localeCompare(b.account)));
+  // Loans with no Auto/Cove/Jasmine/Ledges category can still be tagged
+  // Fixed or Variable directly (e.g. NordicTrack Financing) — those fold
+  // into the same two groups as P&L accounts; whatever's left over (no
+  // category, no Fixed/Variable tag) stays in Recurring Debt Service below.
+  const uncategorizedLoanRows = activeLoanRows.filter(r => !effectiveLoanCategory(r));
+  const loanRowsTaggedFixed = uncategorizedLoanRows.filter(r => fixedVarOf(debtKeyFor(r)) === "fixed");
+  const loanRowsTaggedVariable = uncategorizedLoanRows.filter(r => fixedVarOf(debtKeyFor(r)) === "variable");
+  const remainingLoanRows = uncategorizedLoanRows.filter(r => !fixedVarOf(debtKeyFor(r)));
+
+  const generalFixedGroup = buildGroup("Other Fixed Expenses", "typ_expfixed_general", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "fixed").sort((a, b) => a.account.localeCompare(b.account)), loanRowsTaggedFixed);
+  const variableGroup = buildGroup("Variable Expenses", "typ_expvariable", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "variable").sort((a, b) => a.account.localeCompare(b.account)), loanRowsTaggedVariable);
   const untaggedGroup = buildGroup("⚠ Uncategorized Expenses — needs a Fixed/Variable tag", "typ_expuntagged", uncategorizedPlRows.filter(r => !fixedVarOf(expenseKey(r))).sort((a, b) => a.account.localeCompare(b.account)));
-  const expenseGroups = [...categoryGroups, fixedGroup, variableGroup, untaggedGroup];
+
+  const fixedSubgroups = [...namedCategoryGroups, generalFixedGroup].filter(g => g.memberRows.length);
+  let fixedSeries = zeros(n), fixedBudget = 0;
+  fixedSubgroups.forEach(g => { addInto(fixedSeries, g.series); fixedBudget += g.budget; });
+  const fixedParent = { label: "Fixed Expenses", key: "typ_expfixed", series: fixedSeries, budget: fixedBudget, subgroups: fixedSubgroups };
 
   let expensesSeries = zeros(n), expensesBudget = 0;
-  expenseGroups.forEach(g => { addInto(expensesSeries, g.series); expensesBudget += g.budget; });
+  [fixedParent, variableGroup, untaggedGroup].forEach(g => { addInto(expensesSeries, g.series); expensesBudget += g.budget; });
 
   const adjGrossProfit = subSeries(adjRevenue, adjCos);
   const adjOperatingIncome = subSeries(adjGrossProfit, expensesSeries);
@@ -2978,10 +3019,19 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     addComputedRow(line.label, SERIES_BY_KEY[line.key], BUDGET_BY_KEY[line.key], line.key === "netIncome" ? "grandtotal" : "summary-line", isExpandable ? key : null);
     if (!isExpandable || !expandedKeys.has(key)) return;
     if (line.key === "expenses") {
-      expenseGroups.forEach(g => {
+      if (fixedParent.subgroups.length) {
+        addComputedRow(fixedParent.label, fixedParent.series, fixedParent.budget, "summary-line", fixedParent.key);
+        if (expandedKeys.has(fixedParent.key)) {
+          fixedParent.subgroups.forEach(g => {
+            addComputedRow(g.label, g.series, g.budget, "summary-line", g.key);
+            if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
+          });
+        }
+      }
+      [variableGroup, untaggedGroup].forEach(g => {
         if (!g.memberRows.length) return;
         addComputedRow(g.label, g.series, g.budget, "summary-line", g.key);
-        if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { expense: r.expense }));
+        if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
       });
       return;
     }
@@ -2998,18 +3048,18 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     }
   });
 
-  // ---- Recurring debt service: everything installment EXCEPT the loans
-  // already folded into Auto/Cove/Jasmine above (avoids double-counting),
-  // split from revolving credit (lumpy draws, not a fixed obligation). ----
-  const installment = model.debt.rows.filter(r => INSTALLMENT_DEBT_RE.test(r.account) && !categorizedLoanAccounts.has(r.account));
-  const revolving = model.debt.rows.filter(r => !INSTALLMENT_DEBT_RE.test(r.account));
+  // ---- Recurring debt service: whatever's left of the loan universe after
+  // Auto/Cove/Jasmine/Ledges and any direct Fixed/Variable tags above — still
+  // classifiable via the same selectors, split from revolving credit (lumpy
+  // draws, not a fixed obligation). ----
+  const installment = remainingLoanRows.filter(r => INSTALLMENT_DEBT_RE.test(r.account));
+  const revolving = remainingLoanRows.filter(r => !INSTALLMENT_DEBT_RE.test(r.account));
 
-  addSubHeader("Recurring Debt Service — Other Loans Not Already in Auto/Cove/Jasmine");
+  addSubHeader("Recurring Debt Service — Remaining Loans Not Yet Categorized");
   const debtKey = "typ_debt";
   let debtSeries = zeros(n), debtBudget = 0;
   installment.forEach(r => {
     const key = typicalAccountKey("debt", r.account, r.company);
-    if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
     addInto(debtSeries, r.values);
     debtBudget += budgetOf(key, r.values);
   });
@@ -3017,8 +3067,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   if (expandedKeys.has(debtKey)) {
     installment.forEach(r => {
       const key = typicalAccountKey("debt", r.account, r.company);
-      if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
-      addDetailRow(key, r.account + " — " + r.company, r.values);
+      addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true });
     });
   }
 
@@ -3032,7 +3081,6 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     let revSeries = zeros(n), revBudget = 0;
     revolving.forEach(r => {
       const key = typicalAccountKey("debt", r.account, r.company);
-      if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
       addInto(revSeries, r.values);
       revBudget += budgetOf(key, r.values);
     });
@@ -3040,8 +3088,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     if (expandedKeys.has(revKey)) {
       revolving.forEach(r => {
         const key = typicalAccountKey("debt", r.account, r.company);
-        if (statusOf(key) === "removed" || statusOf(key) === "seasonal") return;
-        addDetailRow(key, r.account + " — " + r.company, r.values);
+        addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true });
       });
     }
   }
@@ -3052,11 +3099,11 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   const allAccountRows = [];
   PL_SECTION_KEYS.forEach(sectionKey => {
     sectionData[sectionKey].rows.forEach(r => {
-      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values, expense: sectionKey === "Expenses" });
+      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values, classifiable: true });
     });
   });
   model.debt.rows.forEach(r => {
-    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values, expense: false });
+    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values, classifiable: true });
   });
 
   const seasonalRows = allAccountRows.filter(r => statusOf(r.key) === "seasonal");
@@ -3066,7 +3113,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     seasonalRows.forEach(r => {
       addInto(seasonalSeries, r.series);
       seasonalBudget += budgetOf(r.key, r.series);
-      addDetailRow(r.key, r.label, r.series, { expense: r.expense });
+      addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable });
     });
     addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null);
   }
@@ -3078,7 +3125,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     const headerRow = tbody.lastElementChild;
     headerRow.classList.add("expand-toggle");
     headerRow.dataset.key = removedKey;
-    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { expense: r.expense }));
+    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
   }
 
   table.appendChild(tbody);
