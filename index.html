@@ -2879,7 +2879,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
       tr.appendChild(editTextCell(key, mergeAsOf(key), label, key + "_merge", rerender));
       tr.appendChild(selectCell(categoryOf(key), [
         { value: "", label: "—" }, { value: "auto", label: "Auto" }, { value: "cove", label: "Cove" },
-        { value: "jasmine", label: "Jasmine" }, { value: "ledges", label: "Ledges" }
+        { value: "jasmine", label: "Jasmine" }, { value: "ledges", label: "Ledges" }, { value: "health", label: "Health" }
       ], v => setTypicalCategory(key, v)));
       tr.appendChild(selectCell(fixedVarOf(key), [
         { value: "", label: "—" }, { value: "fixed", label: "Fixed" }, { value: "variable", label: "Variable" }
@@ -3021,7 +3021,8 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     buildGroup("Auto Expenses", "typ_expcat_auto", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "auto"), autoLoanRows),
     buildGroup("Cove Expenses", "typ_expcat_cove", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "cove"), coveLoanRows),
     buildGroup("Jasmine Expenses", "typ_expcat_jasmine", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "jasmine"), jasmineLoanRows),
-    buildGroup("Ledges Expenses", "typ_expcat_ledges", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "ledges"), ledgesLoanRows)
+    buildGroup("Ledges Expenses", "typ_expcat_ledges", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "ledges"), ledgesLoanRows),
+    buildGroup("Health Expenses", "typ_expcat_health", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "health"))
   ].filter(g => g.memberRows.length);
   const uncategorizedPlRows = plExpenseRows.filter(r => !categoryOf(expenseKey(r)));
   // Loans with no Auto/Cove/Jasmine/Ledges category can still be tagged
