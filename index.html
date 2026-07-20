@@ -71,6 +71,8 @@
   td.row-actions { white-space: nowrap; }
   td.row-actions button { margin-right: 5px; }
   td.row-actions button:last-child { margin-right: 0; }
+  #typicalTable input.currency-input { text-align: right; width: 90px; }
+  select.row-select { font-size: 11.5px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; }
 
   /* ---- Retirement Plan tabs ---- */
   .retire-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
@@ -665,6 +667,17 @@ function fmtMoney(n) {
   return r < 0 ? `($${s}${suffix})` : `$${s}${suffix}`;
 }
 
+// Same rounding/negative-paren convention as fmtMoney but no "$" — used on
+// the Typical Month tab, which is dense enough with columns that the dollar
+// signs added more visual noise than clarity.
+function fmtWhole(n) {
+  if (n == null || !isFinite(n)) return "—";
+  const r = Math.round(n);
+  const abs = Math.abs(r);
+  const s = abs.toLocaleString("en-US");
+  return r < 0 ? `(${s})` : s;
+}
+
 function fmtPct(n) {
   if (n == null || !isFinite(n)) return "—";
   const r = n * 100;
@@ -1171,6 +1184,40 @@ function editBudgetCell(key, defaultVal, focusKey, rerender) {
   input.addEventListener("blur", () => { input.value = fmtCurrencyInput(currentVal()); });
   input.setAttribute("data-focus-key", focusKey);
   td.appendChild(input);
+  return td;
+}
+
+// Fixed/Variable and the 3 named property categories are only meaningful for
+// Expenses-section accounts, but stored in the same override entry as
+// status/budget since they're keyed the same way.
+function categoryOf(key) { return typicalOverrides[key] && typicalOverrides[key].category; }
+function fixedVarOf(key) { return typicalOverrides[key] && typicalOverrides[key].fixedVar; }
+function setTypicalCategory(key, category) {
+  const entry = typicalOverrides[key] || {};
+  if (category == null) delete entry.category; else entry.category = category;
+  typicalOverrides[key] = entry;
+  saveTypicalOverrides();
+  render();
+}
+function setTypicalFixedVar(key, fixedVar) {
+  const entry = typicalOverrides[key] || {};
+  if (fixedVar == null) delete entry.fixedVar; else entry.fixedVar = fixedVar;
+  typicalOverrides[key] = entry;
+  saveTypicalOverrides();
+  render();
+}
+function selectCell(value, options, onChange) {
+  const td = document.createElement("td");
+  const sel = document.createElement("select");
+  sel.className = "row-select";
+  options.forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt.value; o.textContent = opt.label;
+    if (opt.value === (value || "")) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => onChange(sel.value || null));
+  td.appendChild(sel);
   return td;
 }
 
@@ -2694,14 +2741,30 @@ function renderDebtCard(model, entVal, companies) {
 }
 
 // ---- Typical Month (budget baseline) tab -------------------------------
-// Averages the P&L over a selectable trailing window to answer "what does a
+// Averages the P&L over several trailing windows to answer "what does a
 // normal month look like," then layers on the recurring debt service (SOCF
 // mortgage/auto-loan principal) that never shows up on a P&L — together
 // these give a number to set as a monthly budget target. Revolving credit
 // (HELOC, lines of credit) is shown for awareness but deliberately excluded
 // from the target itself: draws/paydowns there are lumpy by nature, not a
 // steady monthly obligation the way a mortgage or car payment is.
+//
+// Expenses get a second, budgeting-specific breakdown: Auto/Cove/Jasmine are
+// named property/asset categories that blend real P&L expense accounts
+// (tagged by Tim/Hilary via the Category selector) with the matching loan's
+// principal paydown from the SOCF — a deliberate departure from pure GAAP,
+// since this tab exists to answer "what do we need in the checking account
+// each month," not to restate the P&L. Everything else in Expenses gets a
+// Fixed/Variable tag instead, for the usual "which costs actually flex"
+// question. To avoid double-counting, any loan folded into Auto/Cove/Jasmine
+// is excluded from the general Recurring Debt Service bucket below.
 const INSTALLMENT_DEBT_RE = /^Loan on |Mortgage|Financing/i;
+// "Loan on Ledges Townhome" also starts with "Loan on " but is real estate,
+// not a vehicle — explicitly excluded so it stays in the general Recurring
+// Debt Service bucket instead of getting swept into Auto Expenses.
+const AUTO_LOAN_RE = /^Loan on (?!Ledges Townhome)/i;
+const COVE_LOAN_RE = /^Cove Mortgage/i;
+const JASMINE_LOAN_RE = /^Jasmine Mortgage/i;
 
 function renderTypicalMonth(summaryLines, sectionData, companies) {
   const endIdx = currentMonthIdx;
@@ -2715,7 +2778,9 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   }
 
   document.getElementById("typicalSub").textContent =
-    `Average monthly Revenue, Cost of Sales, and Expenses across several trailing windows, plus recurring debt service (mortgages & auto loans) from the actual Statement of Cash Flows. Set your own Budget per line — Annualized is Budget × 12. Click ▸ to expand account detail, ✕ Remove to drop a one-off from the analysis entirely, or → Seasonal to move a recurring-but-not-monthly item (like K1 income) to its own section below.`;
+    `Average monthly Revenue, Cost of Sales, and Expenses across several trailing windows, anchored on the Month in Review selected above (currently ${months[endIdx].label}), plus recurring debt service (mortgages & auto loans) from the actual Statement of Cash Flows. Set your own Budget per line — Annualized is Budget × 12. Tag each expense Fixed/Variable, or assign it to Auto/Cove/Jasmine. Click ▸ to expand, ✕ Remove to drop a one-off entirely, or → Seasonal to move a recurring-but-not-monthly item (like K1 income) to its own section below.`;
+
+  const model = buildSocfCashFlowModel(companies);
 
   const table = document.getElementById("typicalTable");
   table.innerHTML = "";
@@ -2725,29 +2790,35 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   AVG_WINDOWS.forEach(w => headRow.appendChild(th(w.label)));
   headRow.appendChild(th("Budget"));
   headRow.appendChild(th("Annualized (×12)"));
+  headRow.appendChild(th("Category"));
+  headRow.appendChild(th("Type"));
   headRow.appendChild(th("Actions"));
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
   const rerender = () => renderTypicalMonth(summaryLines, sectionData, companies);
-  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }]);
+  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
 
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
   // budget here is always a computed roll-up, never directly editable.
   function addComputedRow(label, series, budgetVal, rowClass, expandKey) {
-    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "—" : fmtMoney(v) }; });
-    cells.push({ text: fmtMoney(budgetVal) });
-    cells.push({ text: fmtMoney(budgetVal * 12) });
+    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "—" : fmtWhole(v) }; });
+    cells.push({ text: fmtWhole(budgetVal) });
+    cells.push({ text: fmtWhole(budgetVal * 12) });
     const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells);
-    tr.appendChild(document.createElement("td"));
+    tr.appendChild(document.createElement("td")); // Category
+    tr.appendChild(document.createElement("td")); // Type
+    tr.appendChild(document.createElement("td")); // Actions
     tbody.appendChild(tr);
   }
   function addSubHeader(label) {
     tbody.appendChild(buildRow("section-sub-header", label, blankExtraCells()));
   }
   // Leaf account row — editable Budget, plus Remove/Seasonal/Restore actions.
-  function addDetailRow(key, label, series) {
+  // opts.expense adds the Category/Type selectors (Expenses P&L accounts only).
+  function addDetailRow(key, label, series, opts) {
+    opts = opts || {};
     const status = statusOf(key);
     const tr = document.createElement("tr");
     tr.className = "detail";
@@ -2758,7 +2829,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     AVG_WINDOWS.forEach(w => {
       const v = windowAvg(series, w.months);
       const td = document.createElement("td");
-      td.textContent = v == null ? "—" : fmtMoney(v);
+      td.textContent = v == null ? "—" : fmtWhole(v);
       if (typeof v === "number" && v < 0) td.classList.add("neg");
       tr.appendChild(td);
     });
@@ -2766,9 +2837,21 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     tr.appendChild(editBudgetCell(key, def, key + "_budget", rerender));
     const budgetVal = budgetOf(key, series);
     const annTd = document.createElement("td");
-    annTd.textContent = fmtMoney(budgetVal * 12);
+    annTd.textContent = fmtWhole(budgetVal * 12);
     if (budgetVal < 0) annTd.classList.add("neg");
     tr.appendChild(annTd);
+    if (opts.expense) {
+      tr.appendChild(selectCell(categoryOf(key), [
+        { value: "", label: "—" }, { value: "auto", label: "Auto" },
+        { value: "cove", label: "Cove" }, { value: "jasmine", label: "Jasmine" }
+      ], v => setTypicalCategory(key, v)));
+      tr.appendChild(selectCell(fixedVarOf(key), [
+        { value: "", label: "—" }, { value: "fixed", label: "Fixed" }, { value: "variable", label: "Variable" }
+      ], v => setTypicalFixedVar(key, v)));
+    } else {
+      tr.appendChild(document.createElement("td"));
+      tr.appendChild(document.createElement("td"));
+    }
     const actionTd = document.createElement("td");
     actionTd.className = "row-actions";
     if (status === "seasonal" || status === "removed") {
@@ -2817,31 +2900,92 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   const adjRevenue = adjustedSectionSeries("Income");
   const adjCos = adjustedSectionSeries("Cost of Goods Sold");
-  const adjExpenses = adjustedSectionSeries("Expenses");
   const adjOtherIncome = adjustedSectionSeries("Other Income");
   const adjOtherExpenses = adjustedSectionSeries("Other Expenses");
+  const budgetRevenue = sectionBudgetSum("Income");
+  const budgetCos = sectionBudgetSum("Cost of Goods Sold");
+  const budgetOtherIncome = sectionBudgetSum("Other Income");
+  const budgetOtherExpenses = sectionBudgetSum("Other Expenses");
+
+  // ---- Expenses: Auto/Cove/Jasmine (P&L accounts tagged by Tim/Hilary +
+  // the matching loan's principal) computed first, then whatever's left
+  // grouped Fixed/Variable/Uncategorized. Nothing renders yet — that only
+  // happens once we know whether the "Expenses" row itself is expanded. ----
+  function expenseKey(r) { return typicalAccountKey("pl_Expenses", r.account, null); }
+  function debtKeyFor(r) { return typicalAccountKey("debt", r.account, r.company); }
+
+  const plExpenseRows = sectionData["Expenses"].rows.filter(r => {
+    const s = statusOf(expenseKey(r));
+    return s !== "removed" && s !== "seasonal";
+  });
+  const autoLoanRows = model.debt.rows.filter(r => AUTO_LOAN_RE.test(r.account));
+  const coveLoanRows = model.debt.rows.filter(r => COVE_LOAN_RE.test(r.account));
+  const jasmineLoanRows = model.debt.rows.filter(r => JASMINE_LOAN_RE.test(r.account));
+  const categorizedLoanAccounts = new Set([...autoLoanRows, ...coveLoanRows, ...jasmineLoanRows].map(r => r.account));
+
+  function buildGroup(label, key, plRows, loanRows) {
+    let series = zeros(n), budget = 0;
+    const memberRows = [];
+    plRows.forEach(r => {
+      addInto(series, r.values);
+      budget += budgetOf(expenseKey(r), r.values);
+      memberRows.push({ key: expenseKey(r), label: r.account, series: r.values, expense: true });
+    });
+    (loanRows || []).forEach(r => {
+      const k = debtKeyFor(r);
+      if (statusOf(k) === "removed" || statusOf(k) === "seasonal") return;
+      // SOCF principal is cash-flow-signed (negative = paid down); flip it
+      // to expense-style positive so it sums consistently with the P&L
+      // accounts above instead of subtracting from them.
+      const expenseSigned = r.values.map(v => -v);
+      addInto(series, expenseSigned);
+      budget += budgetOf(k, expenseSigned);
+      memberRows.push({ key: k, label: r.account + " — " + r.company + " (loan principal)", series: expenseSigned, expense: false });
+    });
+    return { label, key, series, budget, memberRows };
+  }
+
+  const categoryGroups = [
+    buildGroup("Auto Expenses", "typ_expcat_auto", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "auto"), autoLoanRows),
+    buildGroup("Cove Expenses", "typ_expcat_cove", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "cove"), coveLoanRows),
+    buildGroup("Jasmine Expenses", "typ_expcat_jasmine", plExpenseRows.filter(r => categoryOf(expenseKey(r)) === "jasmine"), jasmineLoanRows)
+  ];
+  const uncategorizedPlRows = plExpenseRows.filter(r => !categoryOf(expenseKey(r)));
+  const fixedGroup = buildGroup("Fixed Expenses", "typ_expfixed", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "fixed").sort((a, b) => a.account.localeCompare(b.account)));
+  const variableGroup = buildGroup("Variable Expenses", "typ_expvariable", uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r)) === "variable").sort((a, b) => a.account.localeCompare(b.account)));
+  const untaggedGroup = buildGroup("⚠ Uncategorized Expenses — needs a Fixed/Variable tag", "typ_expuntagged", uncategorizedPlRows.filter(r => !fixedVarOf(expenseKey(r))).sort((a, b) => a.account.localeCompare(b.account)));
+  const expenseGroups = [...categoryGroups, fixedGroup, variableGroup, untaggedGroup];
+
+  let expensesSeries = zeros(n), expensesBudget = 0;
+  expenseGroups.forEach(g => { addInto(expensesSeries, g.series); expensesBudget += g.budget; });
+
   const adjGrossProfit = subSeries(adjRevenue, adjCos);
-  const adjOperatingIncome = subSeries(adjGrossProfit, adjExpenses);
+  const adjOperatingIncome = subSeries(adjGrossProfit, expensesSeries);
   const adjNonOperating = subSeries(adjOtherIncome, adjOtherExpenses);
   const adjNetIncome = addSeries(adjOperatingIncome, adjNonOperating);
 
-  const budgetRevenue = sectionBudgetSum("Income");
-  const budgetCos = sectionBudgetSum("Cost of Goods Sold");
-  const budgetExpenses = sectionBudgetSum("Expenses");
-  const budgetOtherIncome = sectionBudgetSum("Other Income");
-  const budgetOtherExpenses = sectionBudgetSum("Other Expenses");
   const budgetGrossProfit = budgetRevenue - budgetCos;
-  const budgetOperatingIncome = budgetGrossProfit - budgetExpenses;
+  const budgetOperatingIncome = budgetGrossProfit - expensesBudget;
   const budgetNonOperating = budgetOtherIncome - budgetOtherExpenses;
   const budgetNetIncome = budgetOperatingIncome + budgetNonOperating;
 
-  const SERIES_BY_KEY = { revenue: adjRevenue, cos: adjCos, grossProfit: adjGrossProfit, expenses: adjExpenses, operatingIncome: adjOperatingIncome, nonOperating: adjNonOperating, netIncome: adjNetIncome };
-  const BUDGET_BY_KEY = { revenue: budgetRevenue, cos: budgetCos, grossProfit: budgetGrossProfit, expenses: budgetExpenses, operatingIncome: budgetOperatingIncome, nonOperating: budgetNonOperating, netIncome: budgetNetIncome };
+  const SERIES_BY_KEY = { revenue: adjRevenue, cos: adjCos, grossProfit: adjGrossProfit, expenses: expensesSeries, operatingIncome: adjOperatingIncome, nonOperating: adjNonOperating, netIncome: adjNetIncome };
+  const BUDGET_BY_KEY = { revenue: budgetRevenue, cos: budgetCos, grossProfit: budgetGrossProfit, expenses: expensesBudget, operatingIncome: budgetOperatingIncome, nonOperating: budgetNonOperating, netIncome: budgetNetIncome };
 
   summaryLines.forEach(line => {
     const key = "typ_" + line.key;
-    addComputedRow(line.label, SERIES_BY_KEY[line.key], BUDGET_BY_KEY[line.key], line.key === "netIncome" ? "grandtotal" : "summary-line", line.expand ? key : null);
-    if (line.expand && expandedKeys.has(key)) {
+    const isExpandable = line.key === "expenses" || line.expand;
+    addComputedRow(line.label, SERIES_BY_KEY[line.key], BUDGET_BY_KEY[line.key], line.key === "netIncome" ? "grandtotal" : "summary-line", isExpandable ? key : null);
+    if (!isExpandable || !expandedKeys.has(key)) return;
+    if (line.key === "expenses") {
+      expenseGroups.forEach(g => {
+        if (!g.memberRows.length) return;
+        addComputedRow(g.label, g.series, g.budget, "summary-line", g.key);
+        if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { expense: r.expense }));
+      });
+      return;
+    }
+    if (line.expand) {
       line.expand.forEach(sectionKey => {
         if (line.expand.length > 1 && sectionDisplayLabel(sectionKey) !== line.label) addSubHeader(sectionDisplayLabel(sectionKey));
         sectionData[sectionKey].rows.forEach(r => {
@@ -2854,14 +2998,13 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     }
   });
 
-  // ---- Recurring debt service, from the same SOCF-based model as the Cash
-  // Flow tab, split into installment (steady monthly payment) vs. revolving
-  // (lumpy draws/paydowns not treated as a fixed monthly obligation). ----
-  const model = buildSocfCashFlowModel(companies);
-  const installment = model.debt.rows.filter(r => INSTALLMENT_DEBT_RE.test(r.account));
+  // ---- Recurring debt service: everything installment EXCEPT the loans
+  // already folded into Auto/Cove/Jasmine above (avoids double-counting),
+  // split from revolving credit (lumpy draws, not a fixed obligation). ----
+  const installment = model.debt.rows.filter(r => INSTALLMENT_DEBT_RE.test(r.account) && !categorizedLoanAccounts.has(r.account));
   const revolving = model.debt.rows.filter(r => !INSTALLMENT_DEBT_RE.test(r.account));
 
-  addSubHeader("Recurring Debt Service — Mortgages & Auto Loans");
+  addSubHeader("Recurring Debt Service — Other Loans Not Already in Auto/Cove/Jasmine");
   const debtKey = "typ_debt";
   let debtSeries = zeros(n), debtBudget = 0;
   installment.forEach(r => {
@@ -2909,11 +3052,11 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   const allAccountRows = [];
   PL_SECTION_KEYS.forEach(sectionKey => {
     sectionData[sectionKey].rows.forEach(r => {
-      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values });
+      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values, expense: sectionKey === "Expenses" });
     });
   });
   model.debt.rows.forEach(r => {
-    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values });
+    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values, expense: false });
   });
 
   const seasonalRows = allAccountRows.filter(r => statusOf(r.key) === "seasonal");
@@ -2923,7 +3066,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     seasonalRows.forEach(r => {
       addInto(seasonalSeries, r.series);
       seasonalBudget += budgetOf(r.key, r.series);
-      addDetailRow(r.key, r.label, r.series);
+      addDetailRow(r.key, r.label, r.series, { expense: r.expense });
     });
     addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null);
   }
@@ -2935,7 +3078,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     const headerRow = tbody.lastElementChild;
     headerRow.classList.add("expand-toggle");
     headerRow.dataset.key = removedKey;
-    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series));
+    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { expense: r.expense }));
   }
 
   table.appendChild(tbody);
