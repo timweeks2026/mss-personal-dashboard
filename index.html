@@ -163,6 +163,11 @@
 
   tr.summary-line td { font-weight: 700; background: #fff; border-top: 1px solid var(--border); }
   tr.summary-line td.mir { background: #dde9fa; }
+  /* Nested subtotal rows (e.g. Auto/Cove/Jasmine/Ledges under Fixed Expenses)
+     — lighter weight/color and indented label so they read as one level
+     deeper than the parent group they roll up into. */
+  tr.summary-line.nested td { font-weight: 600; color: var(--muted); border-top: 1px solid #eef1f5; }
+  tr.summary-line.nested td.label-col { padding-left: 26px; }
   tr.margin-line td { font-weight: 400; font-style: italic; color: var(--muted); font-size: 12px; background: #fff; }
   tr.margin-line td.mir { background: #eaf1fb; }
   tr.section-sub-header td { background: #eef2f7; font-weight: 600; font-size: 11.5px; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
@@ -3063,7 +3068,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
         addComputedRow(fixedParent.label, fixedParent.series, fixedParent.budget, "summary-line", fixedParent.key);
         if (expandedKeys.has(fixedParent.key)) {
           fixedParent.subgroups.forEach(g => {
-            addComputedRow(g.label, g.series, g.budget, "summary-line", g.key);
+            addComputedRow(g.label, g.series, g.budget, "summary-line nested", g.key);
             if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
           });
         }
