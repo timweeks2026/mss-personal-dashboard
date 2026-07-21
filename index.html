@@ -349,6 +349,8 @@
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
   <button class="tab-btn" data-tab="typical" type="button">Budget</button>
+  <button class="tab-btn" data-tab="compare" type="button">Actual vs Budget</button>
+  <button class="tab-btn" data-tab="history" type="button">History</button>
   <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
   <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
   <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
@@ -471,6 +473,29 @@
       <div class="section-sub" id="typicalSub"></div>
       <span class="save-indicator" id="typicalSaveIndicator"></span>
       <div class="table-wrap"><table id="typicalTable"></table></div>
+    </section>
+  </div>
+
+  <div id="panel-compare" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Actual vs Budget</h2>
+      <div class="section-sub" id="compareSub"></div>
+      <div class="table-wrap"><table id="compareTable"></table></div>
+    </section>
+  </div>
+
+  <div id="panel-history" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">History</h2>
+      <div class="section-sub" id="historySub"></div>
+      <div class="inline-control">
+        <div class="radio-group">
+          <label><input type="radio" name="historyBasis" value="monthly" checked> Monthly (Last 12)</label>
+          <label><input type="radio" name="historyBasis" value="quarterly"> Quarterly (Last 20)</label>
+          <label><input type="radio" name="historyBasis" value="yearly"> Yearly (Last 4 + Current)</label>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="historyTable"></table></div>
     </section>
   </div>
 
@@ -1068,7 +1093,7 @@ function renderBusinessLines(companies) {
 
   function addSummaryRow(label, series, polarity, expandKey) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
-    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells));
+    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells, expandKey));
   }
   function addPctRow(pctOfRevenue, polarity) {
     const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
@@ -1276,7 +1301,8 @@ function buildExpenseGroupsForDisplay(sectionData) {
 
   const allRows = sectionData["Expenses"].rows;
   const activeRows = allRows.filter(r => { const s = typicalStatusOf(expenseKey(r.account)); return s !== "removed" && s !== "seasonal"; });
-  const excludedRows = allRows.filter(r => { const s = typicalStatusOf(expenseKey(r.account)); return s === "removed" || s === "seasonal"; });
+  const removedRows = allRows.filter(r => typicalStatusOf(expenseKey(r.account)) === "removed");
+  const seasonalRows = allRows.filter(r => typicalStatusOf(expenseKey(r.account)) === "seasonal");
 
   // Merge As: same as the Budget tab — 2+ accounts sharing a typed label
   // combine into one row before category/Fixed-Variable classification.
@@ -1312,7 +1338,12 @@ function buildExpenseGroupsForDisplay(sectionData) {
     fixedParent: { label: "Fixed Expenses", series: fixedSeries, subgroups: fixedSubgroups },
     variableGroup: group("Variable Expenses", variableRows),
     untaggedGroup: group("Uncategorized Expenses", untaggedRows),
-    excludedGroup: group("Excluded From Budget Categorization (Removed/Seasonal)", excludedRows)
+    // Kept separate (rather than one combined bucket) so Removed can stay in
+    // its usual spot alongside the other Expense breakdowns while Seasonal
+    // moves down near the bottom of the Statement, matching the Budget tab's
+    // layout — see renderStatement.
+    removedGroup: group("Removed From Analysis", removedRows),
+    seasonalGroup: group("Seasonal Expenses", seasonalRows)
   };
 }
 
@@ -1387,6 +1418,167 @@ function buildDebtPrincipalGroupsForDisplay(model) {
     variableGroup, remainingGroup, totalSeries,
     revolvingGroup: { label: "Revolving Credit Activity — Not Counted in Total Cash Result", series: revolvingSeries, rows: revolvingRows }
   };
+}
+
+// ---- Shared Budget-tab data model, as plain data (no DOM) --------------
+// The single source of truth for the Budget tab's exact hybrid accrual+cash
+// structure (Auto/Cove/Jasmine/Ledges/Health blending P&L accounts with SOCF
+// loan principal, Fixed/Variable/Uncategorized for the rest, Recurring Debt
+// Service + Typical Monthly Cash Available below Net Income). The Budget
+// tab, the Compare (Actual vs Budget) screen, and the History screen all
+// render from this same tree so a classification made once can never read
+// differently in one place than another.
+//
+// Every node: { key, label, series (60mo actual $ series), monthlyBudget
+// (flat monthly target — the same figure regardless of which period is
+// being viewed elsewhere), style: "summary"|"grandtotal"|"nested"|"detail",
+// children: [] }. A leaf account has children: [].
+function buildBudgetTree(summaryLines, sectionData, model) {
+  const n = monthLabels.length;
+  const endIdx = currentMonthIdx;
+  function default12mo(series) { return trailingAverage(series, endIdx, 12) || 0; }
+  function statusOf(key) { return typicalOverrides[key] && typicalOverrides[key].status; }
+  function budgetOf(key, series) {
+    const entry = typicalOverrides[key];
+    return entry && entry.budget != null ? entry.budget : default12mo(series);
+  }
+  function expenseKey(account) { return typicalAccountKey("pl_Expenses", account, null); }
+  function debtKeyFor(r) { return typicalAccountKey("debt", r.account, r.company); }
+  function leaf(key, label, series) {
+    return { key, label, series, monthlyBudget: budgetOf(key, series), style: "detail", children: [] };
+  }
+  function group(key, label, series, style, children) {
+    let budget = 0;
+    (children || []).forEach(c => { budget += c.monthlyBudget; });
+    return { key, label, series, monthlyBudget: budget, style, children: children || [] };
+  }
+
+  // ---- Revenue / Cost of Sales / Non-Operating: same P&L rows as the
+  // Statement, minus Removed/Seasonal (Budget's own convention). ----
+  function plSectionNode(lineKey, label, style, sectionKeys) {
+    const leafRows = [];
+    const series = zeros(n);
+    sectionKeys.forEach(sectionKey => {
+      sectionData[sectionKey].rows.forEach(r => {
+        const key = typicalAccountKey("pl_" + sectionKey, r.account, null);
+        const s = statusOf(key);
+        if (s === "removed" || s === "seasonal") return;
+        addInto(series, r.values);
+        leafRows.push(leaf(key, r.account, r.values));
+      });
+    });
+    return group("typ_" + lineKey, label, series, style, leafRows);
+  }
+  const revenueNode = plSectionNode("revenue", "Revenue", "summary", ["Income"]);
+  const cosNode = plSectionNode("cos", "Cost of Sales", "summary", ["Cost of Goods Sold"]);
+  const nonOperatingNode = plSectionNode("nonOperating", "Non-Operating Items", "summary", ["Other Income", "Other Expenses"]);
+
+  // ---- Expenses: Auto/Cove/Jasmine/Ledges/Health (P&L + matching loan
+  // principal, sign-flipped to expense-style) nested under Fixed Expenses
+  // alongside Other Fixed; Variable and Uncategorized stay top-level. ----
+  const rawExpenseRows = sectionData["Expenses"].rows.filter(r => {
+    const s = statusOf(expenseKey(r.account));
+    return s !== "removed" && s !== "seasonal";
+  });
+  const mergedMap = new Map();
+  rawExpenseRows.forEach(r => {
+    const label = mergeAsOf(expenseKey(r.account)) || r.account;
+    if (!mergedMap.has(label)) mergedMap.set(label, zeros(n));
+    addInto(mergedMap.get(label), r.values);
+  });
+  const plExpenseRows = [...mergedMap.entries()].map(([account, values]) => ({ account, values }));
+
+  function loanRegexCategory(account) {
+    if (AUTO_LOAN_RE.test(account)) return "auto";
+    if (COVE_LOAN_RE.test(account)) return "cove";
+    if (JASMINE_LOAN_RE.test(account)) return "jasmine";
+    if (LEDGES_LOAN_RE.test(account)) return "ledges";
+    return null;
+  }
+  function effectiveLoanCategory(r) { return categoryOf(debtKeyFor(r)) || loanRegexCategory(r.account); }
+  const activeLoanRows = model.debt.rows.filter(r => {
+    const s = statusOf(debtKeyFor(r));
+    return s !== "removed" && s !== "seasonal";
+  });
+  function loansForCategory(catId) { return activeLoanRows.filter(r => effectiveLoanCategory(r) === catId); }
+
+  function expensePlusLoanNode(key, label, plRows, loanRows) {
+    const leafRows = [];
+    const series = zeros(n);
+    plRows.forEach(r => {
+      addInto(series, r.values);
+      leafRows.push(leaf(expenseKey(r.account), r.account, r.values));
+    });
+    (loanRows || []).forEach(r => {
+      const k = debtKeyFor(r);
+      if (statusOf(k) === "removed" || statusOf(k) === "seasonal") return;
+      const signed = r.values.map(v => -v);
+      addInto(series, signed);
+      leafRows.push(leaf(k, r.account + " — " + r.company + " (loan principal)", signed));
+    });
+    return group(key, label, series, "nested", leafRows);
+  }
+
+  const namedCategoryNodes = Object.keys(BUDGET_CATEGORY_LABELS).map(catId =>
+    expensePlusLoanNode("typ_expcat_" + catId, BUDGET_CATEGORY_LABELS[catId],
+      plExpenseRows.filter(r => categoryOf(expenseKey(r.account)) === catId), loansForCategory(catId))
+  ).filter(g => g.children.length);
+
+  const uncategorizedPlRows = plExpenseRows.filter(r => !categoryOf(expenseKey(r.account)));
+  const uncategorizedLoanRows = activeLoanRows.filter(r => !effectiveLoanCategory(r));
+  const loanRowsTaggedFixed = uncategorizedLoanRows.filter(r => fixedVarOf(debtKeyFor(r)) === "fixed");
+  const loanRowsTaggedVariable = uncategorizedLoanRows.filter(r => fixedVarOf(debtKeyFor(r)) === "variable");
+  const remainingLoanRows = uncategorizedLoanRows.filter(r => !fixedVarOf(debtKeyFor(r)));
+
+  const generalFixedNode = expensePlusLoanNode("typ_expfixed_general", "Other Fixed Expenses",
+    uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r.account)) === "fixed").sort((a, b) => a.account.localeCompare(b.account)),
+    loanRowsTaggedFixed);
+  const variableNode = expensePlusLoanNode("typ_expvariable", "Variable Expenses",
+    uncategorizedPlRows.filter(r => fixedVarOf(expenseKey(r.account)) === "variable").sort((a, b) => a.account.localeCompare(b.account)),
+    loanRowsTaggedVariable);
+  const untaggedNode = expensePlusLoanNode("typ_expuntagged", "⚠ Uncategorized Expenses — needs a Fixed/Variable tag",
+    uncategorizedPlRows.filter(r => !fixedVarOf(expenseKey(r.account))).sort((a, b) => a.account.localeCompare(b.account)), []);
+
+  const fixedSubgroups = [...namedCategoryNodes, generalFixedNode].filter(g => g.children.length);
+  const fixedSeries = zeros(n);
+  fixedSubgroups.forEach(g => addInto(fixedSeries, g.series));
+  const fixedParent = group("typ_expfixed", "Fixed Expenses", fixedSeries, "summary", fixedSubgroups);
+
+  const expensesChildren = [fixedParent, variableNode, untaggedNode].filter(g => g.children.length);
+  const expensesSeries = zeros(n);
+  expensesChildren.forEach(g => addInto(expensesSeries, g.series));
+  const expensesNode = group("typ_expenses", "Expenses", expensesSeries, "summary", expensesChildren);
+
+  // ---- Derived lines: pure arithmetic, no leaf rows of their own. ----
+  const grossProfitNode = group("typ_grossProfit", "Gross Profit", subSeries(revenueNode.series, cosNode.series), "summary", []);
+  grossProfitNode.monthlyBudget = revenueNode.monthlyBudget - cosNode.monthlyBudget;
+  const operatingIncomeNode = group("typ_operatingIncome", "Operating Income", subSeries(grossProfitNode.series, expensesNode.series), "summary", []);
+  operatingIncomeNode.monthlyBudget = grossProfitNode.monthlyBudget - expensesNode.monthlyBudget;
+  const netIncomeNode = group("typ_netIncome", "Net Income", addSeries(operatingIncomeNode.series, nonOperatingNode.series), "grandtotal", []);
+  netIncomeNode.monthlyBudget = operatingIncomeNode.monthlyBudget + nonOperatingNode.monthlyBudget;
+
+  // ---- Recurring Debt Service (remaining loans) + Typical Monthly Cash
+  // Available; Revolving Credit shown separately, natural sign, informational. ----
+  const installmentRemaining = remainingLoanRows.filter(r => INSTALLMENT_DEBT_RE.test(r.account));
+  const revolvingRemaining = model.debt.rows.filter(r => !INSTALLMENT_DEBT_RE.test(r.account) && (() => { const s = statusOf(debtKeyFor(r)); return s !== "removed" && s !== "seasonal"; })());
+
+  const debtServiceLeaves = installmentRemaining.map(r => leaf(debtKeyFor(r), r.account + " — " + r.company, r.values));
+  const debtServiceSeries = zeros(n);
+  debtServiceLeaves.forEach(l => addInto(debtServiceSeries, l.series));
+  const debtServiceNode = group("typ_debt", "Total Recurring Debt Service", debtServiceSeries, "summary", debtServiceLeaves);
+
+  const typicalCashSeries = addSeries(netIncomeNode.series, debtServiceSeries);
+  const typicalCashNode = group("typ_cash", "Typical Monthly Cash Available (Net Income − Debt Service)", typicalCashSeries, "grandtotal", []);
+  typicalCashNode.monthlyBudget = netIncomeNode.monthlyBudget + debtServiceNode.monthlyBudget;
+
+  const revolvingLeaves = revolvingRemaining.map(r => leaf(debtKeyFor(r), r.account + " — " + r.company, r.values));
+  const revolvingSeries = zeros(n);
+  revolvingLeaves.forEach(l => addInto(revolvingSeries, l.series));
+  const revolvingNode = group("typ_revolving", "Average Monthly Net Draw / (Paydown)", revolvingSeries, "summary", revolvingLeaves);
+
+  const tree = [revenueNode, cosNode, grossProfitNode, expensesNode, operatingIncomeNode, nonOperatingNode, netIncomeNode, debtServiceNode, typicalCashNode];
+  if (revolvingLeaves.length) tree.push(revolvingNode);
+  return tree;
 }
 
 function uid(prefix) { return prefix + "_" + Math.random().toString(36).slice(2, 9); }
@@ -2473,6 +2665,8 @@ function render() {
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
   renderTypicalMonth(summaryLines, sectionData, companies);
+  renderCompare(summaryLines, sectionData, companies);
+  renderHistory(summaryLines, sectionData, companies);
   renderBusinessLines(companies);
 
   document.getElementById("footerNote").textContent =
@@ -2530,10 +2724,14 @@ function renderStatement(summaryLines, sectionData, companies) {
   table.appendChild(buildPeriodThead());
 
   const tbody = document.createElement("tbody");
+  // Computed once up front — used both inline (Fixed/Variable/Removed under
+  // Expenses) and again near the bottom (Seasonal, moved down to match the
+  // Budget tab's layout).
+  const expenseGroups = buildExpenseGroupsForDisplay(sectionData);
 
   function addSummaryRow(label, series, polarity, expandKey) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
-    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells));
+    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells, expandKey));
   }
   function addPctRow(pctOfRevenue, polarity) {
     const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
@@ -2567,7 +2765,7 @@ function renderStatement(summaryLines, sectionData, companies) {
   // P&L section — reuses the exact same This-Month/YTD/TTM cell building.
   function addGroupRow(label, series, expandKey, rowClass, polarity) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity || "neg", false);
-    tbody.appendChild(buildRow(rowClass, labelWithChevron(label, expandKey), cells));
+    tbody.appendChild(buildRow(rowClass, labelWithChevron(label, expandKey), cells, expandKey));
   }
 
   summaryLines.forEach(line => {
@@ -2584,7 +2782,7 @@ function renderStatement(summaryLines, sectionData, companies) {
     // since that was never a real P&L expense — both would otherwise change
     // historical Net Income, which must stay exactly what it really was.
     if (line.key === "expenses") {
-      const groups = buildExpenseGroupsForDisplay(sectionData);
+      const groups = expenseGroups;
       if (groups.fixedParent.subgroups.length) {
         const fixedKey = "stmt_expfixed";
         addGroupRow(groups.fixedParent.label, groups.fixedParent.series, fixedKey, "summary-line");
@@ -2596,7 +2794,9 @@ function renderStatement(summaryLines, sectionData, companies) {
           });
         }
       }
-      [groups.variableGroup, groups.untaggedGroup, groups.excludedGroup].forEach(g => {
+      // Seasonal is deliberately left out here — it's shown further down,
+      // near the bottom of the Statement, matching the Budget tab's layout.
+      [groups.variableGroup, groups.untaggedGroup, groups.removedGroup].forEach(g => {
         if (!g.rows.length) return;
         const gKey = "stmt_exp_" + g.label.replace(/[^a-z0-9]+/gi, "_");
         addGroupRow(g.label, g.series, gKey, "summary-line");
@@ -2662,6 +2862,17 @@ function renderStatement(summaryLines, sectionData, companies) {
     }
   }
 
+  // ---- Seasonal Expenses — moved down here, matching the Budget tab's ----
+  // layout. Already fully counted in Net Income above (nothing here changes
+  // any total); this is purely a relocated, collapsible view of the same
+  // Seasonal-tagged expense accounts that used to sit inline under Expenses.
+  if (expenseGroups.seasonalGroup.rows.length) {
+    addPlainDivider("Seasonal Expenses — Included in Net Income Above");
+    const seasonalKey = "stmt_expseasonal";
+    addGroupRow(expenseGroups.seasonalGroup.label, expenseGroups.seasonalGroup.series, seasonalKey, "summary-line");
+    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+  }
+
   table.appendChild(tbody);
 
   tbody.querySelectorAll(".expand-toggle").forEach(el => {
@@ -2697,8 +2908,10 @@ function buildPeriodCells(pairs, polarity, isPct) {
 
 function labelWithChevron(label, expandKey) {
   if (!expandKey) return `<span class="no-chev"></span>${escapeHtml(label)}`;
+  // Click handling lives on the row itself (see buildRow) so the whole line
+  // is clickable, not just this glyph — this span is purely visual.
   const isOpen = expandedKeys.has(expandKey);
-  return `<span class="chev expand-toggle" data-key="${expandKey}">${isOpen ? "▾" : "▸"}</span>${escapeHtml(label)}`;
+  return `<span class="chev">${isOpen ? "▾" : "▸"}</span>${escapeHtml(label)}`;
 }
 
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -2710,9 +2923,13 @@ function th(text, cls) {
   return el;
 }
 
-function buildRow(rowClass, labelHtml, cells) {
+function buildRow(rowClass, labelHtml, cells, expandKey) {
   const tr = document.createElement("tr");
   tr.className = rowClass;
+  // Whole row is the click target when this row can expand/collapse (not
+  // just the small 14px chevron glyph) — a mis-click next to the arrow used
+  // to do nothing, which read as "the subcategories won't expand."
+  if (expandKey) { tr.classList.add("expand-toggle"); tr.dataset.key = expandKey; }
   const labelTd = document.createElement("td");
   labelTd.className = "label-col";
   labelTd.innerHTML = labelHtml;
@@ -2771,7 +2988,7 @@ function renderBalanceSheet(entVal, companies) {
 
   const tbody = document.createElement("tbody");
   function addLine(label, values, expandKey, rowClass) {
-    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildBsCells(values, currentMonthIdx)));
+    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildBsCells(values, currentMonthIdx), expandKey));
   }
   function addDetail(label, values) {
     tbody.appendChild(buildRow("detail", label, buildBsCells(values, currentMonthIdx)));
@@ -2849,7 +3066,7 @@ function renderCashFlow(entVal, companies) {
 
   const tbody = document.createElement("tbody");
   function addSummary(label, series, expandKey, rowClass) {
-    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false)));
+    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false), expandKey));
   }
   function addDetail(label, series) {
     tbody.appendChild(buildRow("detail", label, buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false)));
@@ -3058,7 +3275,10 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  const rerender = () => renderTypicalMonth(summaryLines, sectionData, companies);
+  // Full global render (not just this tab) so a Budget-dollar edit is
+  // immediately reflected anywhere else that reads it (e.g. the Compare/
+  // History screens) without needing to switch tabs first.
+  const rerender = () => render();
   const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
 
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
@@ -3067,7 +3287,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "N/A" : fmtWhole(v) }; });
     cells.push({ text: fmtWhole(budgetVal) });
     cells.push({ text: fmtWhole(budgetVal * 12) });
-    const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells);
+    const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells, expandKey);
     tr.appendChild(document.createElement("td")); // Merge As
     tr.appendChild(document.createElement("td")); // Category
     tr.appendChild(document.createElement("td")); // Type
@@ -3383,12 +3603,16 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   const seasonalRows = allAccountRows.filter(r => statusOf(r.key) === "seasonal");
   if (seasonalRows.length) {
-    addSubHeader("Seasonal — Not Counted in Typical Monthly Cash Available");
+    const seasonalKey = "typ_seasonal";
+    addSubHeader(`Seasonal — Not Counted in Typical Monthly Cash Available (${seasonalRows.length}) — click to expand`);
+    const headerRow = tbody.lastElementChild;
+    headerRow.classList.add("expand-toggle");
+    headerRow.dataset.key = seasonalKey;
     let seasonalSeries = zeros(n), seasonalBudget = 0;
     seasonalRows.forEach(r => {
       addInto(seasonalSeries, r.series);
       seasonalBudget += budgetOf(r.key, r.series);
-      addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable });
+      if (expandedKeys.has(seasonalKey)) addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable });
     });
     addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null);
   }
@@ -3402,6 +3626,181 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     headerRow.dataset.key = removedKey;
     if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
   }
+
+  table.appendChild(tbody);
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
+}
+
+// Favorable/unfavorable direction per top-level Budget-tree line, used by
+// both the Compare and History screens. Descendants inherit their parent's
+// polarity (Expenses' children are all still "neg" — overspending anywhere
+// under Expenses is unfavorable the same way the Expenses total itself is).
+const BUDGET_NODE_POLARITY = {
+  typ_revenue: "pos", typ_cos: "neg", typ_grossProfit: "pos", typ_expenses: "neg",
+  typ_operatingIncome: "pos", typ_nonOperating: "pos", typ_netIncome: "pos",
+  typ_debt: "neg", typ_cash: "pos", typ_revolving: "neg"
+};
+
+// ---- Actual vs Budget screen -------------------------------------------
+// This Month + Year-to-Date, each as Actual/Budget/$ Diff/% Diff, built from
+// the exact same buildBudgetTree() the Budget tab itself is built from.
+function renderCompare(summaryLines, sectionData, companies) {
+  const model = buildSocfCashFlowModel(companies);
+  const tree = buildBudgetTree(summaryLines, sectionData, model);
+  const endIdx = currentMonthIdx;
+  const ytd = ytdRange(months[endIdx].year, months[endIdx].monthNum);
+  const ytdMonths = ytd ? (ytd[1] - ytd[0] + 1) : 1;
+
+  document.getElementById("compareSub").textContent =
+    `Actual vs. Budget for ${months[endIdx].label} and Year-to-Date (${ytdMonths} month${ytdMonths === 1 ? "" : "s"} elapsed), using the exact same classification as the Budget tab. Click ▸ to expand account detail.`;
+
+  const table = document.getElementById("compareTable");
+  table.innerHTML = "";
+  const thead = document.createElement("thead");
+  const grpRow = document.createElement("tr");
+  grpRow.className = "grp-head";
+  grpRow.appendChild(th("Line Item", "label-col"));
+  const mCell = th(months[endIdx].label); mCell.colSpan = 4; mCell.classList.add("grp-start"); grpRow.appendChild(mCell);
+  const yCell = th("Year-to-Date"); yCell.colSpan = 4; yCell.classList.add("grp-start"); grpRow.appendChild(yCell);
+  thead.appendChild(grpRow);
+  const subRow = document.createElement("tr");
+  subRow.className = "sub-head";
+  subRow.appendChild(th("", "label-col"));
+  [0, 1].forEach(() => {
+    const c1 = th("Actual"); c1.classList.add("grp-start"); subRow.appendChild(c1);
+    subRow.appendChild(th("Budget"));
+    subRow.appendChild(th("Δ$"));
+    const c4 = th("Δ%"); c4.classList.add("narrow"); subRow.appendChild(c4);
+  });
+  thead.appendChild(subRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  function pairCells(actual, budget, polarity) {
+    const diff = actual - budget;
+    const pct = budget ? diff / Math.abs(budget) : null;
+    const arrow = arrowFor(actual, budget, polarity, 0.5);
+    return [
+      { text: fmtMoney(actual), grpStart: true },
+      { text: fmtMoney(budget) },
+      { text: fmtMoney(diff), cls: "delta " + arrow.cls },
+      { text: pct != null ? fmtPct(pct) : "N/A", cls: "delta narrow " + arrow.cls }
+    ];
+  }
+  function cellsFor(node, polarity) {
+    const actualM = node.series[endIdx] || 0;
+    const budgetM = node.monthlyBudget;
+    const actualYtd = ytd ? sumRange(node.series, ytd[0], ytd[1]) : 0;
+    const budgetYtd = budgetM * ytdMonths;
+    return [...pairCells(actualM, budgetM, polarity), ...pairCells(actualYtd, budgetYtd, polarity)];
+  }
+  function addNode(node, polarity, depth) {
+    const hasChildren = node.children.length > 0;
+    const expandKey = hasChildren ? "cmp_" + node.key : null;
+    const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
+    tbody.appendChild(buildRow(rowClass, labelWithChevron(node.label, expandKey), cellsFor(node, polarity), expandKey));
+    if (hasChildren && expandedKeys.has(expandKey)) {
+      node.children.forEach(child => {
+        if (child.children.length) addNode(child, polarity, depth + 1);
+        else tbody.appendChild(buildRow("detail", child.label, cellsFor(child, polarity)));
+      });
+    }
+  }
+
+  tree.forEach(node => addNode(node, BUDGET_NODE_POLARITY[node.key] || "pos", 0));
+
+  table.appendChild(tbody);
+  tbody.querySelectorAll(".expand-toggle").forEach(el => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.key;
+      if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+      render();
+    });
+  });
+}
+
+// ---- History screen ------------------------------------------------------
+// Same Budget-tree structure, shown across many periods instead of vs.
+// budget — Monthly (last 12), Quarterly (last 20), or Yearly (last 4 +
+// current), oldest on the left. Quarters/years are built by summing the
+// underlying monthly series, same convention as everywhere else in the app.
+function historyPeriods(basis, endIdx) {
+  const periods = [];
+  if (basis === "quarterly") {
+    const endYear = months[endIdx].year, endQ = Math.floor(months[endIdx].monthNum / 3);
+    let y = endYear, q = endQ;
+    for (let i = 0; i < 20; i++) {
+      const qStartMonth = q * 3;
+      const startIdx = monthIndexOf(y, qStartMonth), lastIdx = monthIndexOf(y, qStartMonth + 2);
+      periods.unshift({ label: `Q${q + 1} ${String(y).slice(2)}`, range: (startIdx >= 0 && lastIdx >= 0) ? [startIdx, lastIdx] : null });
+      q--; if (q < 0) { q = 3; y--; }
+    }
+  } else if (basis === "yearly") {
+    const endYear = months[endIdx].year;
+    for (let i = 4; i >= 0; i--) {
+      const y = endYear - i;
+      const startIdx = monthIndexOf(y, 0);
+      const lastIdx = months[endIdx].year === y ? endIdx : monthIndexOf(y, 11);
+      periods.push({ label: String(y) + (y === endYear ? " (YTD)" : ""), range: (startIdx >= 0 && lastIdx >= 0) ? [startIdx, lastIdx] : null });
+    }
+  } else {
+    for (let i = 11; i >= 0; i--) {
+      const idx = endIdx - i;
+      periods.push({ label: idx >= 0 ? months[idx].label : "—", range: idx >= 0 ? [idx, idx] : null });
+    }
+  }
+  return periods;
+}
+
+function renderHistory(summaryLines, sectionData, companies) {
+  const model = buildSocfCashFlowModel(companies);
+  const tree = buildBudgetTree(summaryLines, sectionData, model);
+  const endIdx = currentMonthIdx;
+  const basisEl = document.querySelector('input[name="historyBasis"]:checked');
+  const basis = basisEl ? basisEl.value : "monthly";
+  const periods = historyPeriods(basis, endIdx);
+
+  document.getElementById("historySub").textContent =
+    `${basis === "monthly" ? "Trailing 12 months" : basis === "quarterly" ? "Trailing 20 quarters" : "Trailing 4 years plus current year-to-date"}, oldest on the left, built from the same classification as the Budget tab. Click ▸ to expand account detail.`;
+
+  const table = document.getElementById("historyTable");
+  table.innerHTML = "";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(th("Line Item", "label-col"));
+  periods.forEach(p => headRow.appendChild(th(p.label)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  function cellsFor(node) {
+    return periods.map(p => {
+      if (!p.range) return { text: "N/A" };
+      const v = sumRange(node.series, p.range[0], p.range[1]);
+      const cell = { text: fmtMoney(v) };
+      return cell;
+    });
+  }
+  function addNode(node, depth) {
+    const hasChildren = node.children.length > 0;
+    const expandKey = hasChildren ? "hist_" + node.key : null;
+    const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
+    tbody.appendChild(buildRow(rowClass, labelWithChevron(node.label, expandKey), cellsFor(node), expandKey));
+    if (hasChildren && expandedKeys.has(expandKey)) {
+      node.children.forEach(child => {
+        if (child.children.length) addNode(child, depth + 1);
+        else tbody.appendChild(buildRow("detail", child.label, cellsFor(child)));
+      });
+    }
+  }
+  tree.forEach(node => addNode(node, 0));
 
   table.appendChild(tbody);
   tbody.querySelectorAll(".expand-toggle").forEach(el => {
@@ -4091,6 +4490,8 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
     document.getElementById("panel-cashflow").hidden = name !== "cashflow";
     document.getElementById("panel-typical").hidden = name !== "typical";
+    document.getElementById("panel-compare").hidden = name !== "compare";
+    document.getElementById("panel-history").hidden = name !== "history";
     document.getElementById("panel-bizlines").hidden = name !== "bizlines";
     document.getElementById("panel-retireyear").hidden = name !== "retireyear";
     document.getElementById("panel-retire12").hidden = name !== "retire12";
@@ -4103,6 +4504,7 @@ document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
+document.querySelectorAll('input[name="historyBasis"]').forEach(el => el.addEventListener("change", render));
 
 document.getElementById("retireYearSelect").addEventListener("change", renderRetireYearTab);
 document.getElementById("retireAddYearBtn").addEventListener("click", () => {
