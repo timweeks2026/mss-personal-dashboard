@@ -68,9 +68,15 @@
   .btn-secondary:disabled, .btn-primary:disabled { opacity: 0.5; cursor: default; }
   .btn-danger { font-size: 11.5px; padding: 4px 9px; border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--bad); cursor: pointer; }
   .btn-danger:hover { background: #fdecea; }
+  .btn-success { font-size: 11.5px; padding: 4px 9px; border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--good); cursor: pointer; }
+  .btn-success:hover { background: #e6f4ea; }
   td.row-actions { white-space: nowrap; }
   td.row-actions button { margin-right: 5px; }
   td.row-actions button:last-child { margin-right: 0; }
+  .status-badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 10px; margin-right: 6px; display: inline-block; }
+  .status-badge.status-accepted { background: #e6f4ea; color: var(--good); }
+  .status-badge.status-flagged { background: #fdecea; color: var(--bad); }
+  .status-badge.status-cancelled { background: #eef2f7; color: var(--muted); }
   #typicalTable input.currency-input { text-align: right; width: 90px; }
   select.row-select { font-size: 11.5px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; }
   input.merge-input { font-size: 11.5px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; width: 90px; }
@@ -352,6 +358,7 @@
   <button class="tab-btn" data-tab="compare" type="button">Actual vs Budget</button>
   <button class="tab-btn" data-tab="history" type="button">History</button>
   <button class="tab-btn" data-tab="bizlines" type="button">Business Lines</button>
+  <button class="tab-btn" data-tab="recurring" type="button">Recurring Payments</button>
   <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
   <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
 </nav>
@@ -512,6 +519,26 @@
     </section>
   </div>
 
+  <div id="panel-recurring" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Recurring Payments</h2>
+      <div class="section-sub" id="recurringSub"></div>
+      <span class="save-indicator" id="recurringSaveIndicator"></span>
+      <div class="inline-control">
+        <label for="recurringStatusFilter">Show</label>
+        <select id="recurringStatusFilter">
+          <option value="all">All</option>
+          <option value="needsReview">Needs Review</option>
+          <option value="accepted">Accepted</option>
+          <option value="flagged">Flagged</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+      <datalist id="recurringCategoryList"></datalist>
+      <div class="table-wrap"><table id="recurringTable"></table></div>
+    </section>
+  </div>
+
   <div id="panel-retireyear" class="tab-panel" hidden>
     <section>
       <h2 class="section-title">Retirement Plan — Year View</h2>
@@ -595,6 +622,29 @@
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=607248385&single=true&output=csv";
 const BS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1691156209&single=true&output=csv";
 const SOCF_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=561480335&single=true&output=csv";
+// Recurring Payments tab reads two raw QuickBooks "General Ledger" exports
+// (one per entity — QBO doesn't consolidate these across companies), each
+// published to web as CSV. Real QBO shape, not a custom "Mapped" tab: a few
+// report-metadata rows, then a header row, then one row per GL posting line
+// (Date, Transaction Type, Num, Name, Customer, Vendor, Product/Service,
+// Memo/Description, Qty, Rate, Account, Split, Debit, Credit, Open Balance,
+// Amount, Balance, Company — plus whatever extra tracking columns a given
+// company's QBO file adds, e.g. Class/Location). Parsed by header name, not
+// position, so column order/extra columns don't matter. Left blank to
+// disable a source; fetchGLData() skips any empty URL.
+const GL_CSV_URL_PERSONAL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1709930370&single=true&output=csv";
+const GL_CSV_URL_BUSINESS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=716192996&single=true&output=csv";
+// Transaction Types counted as an actual cash outflow to a payee. Deliberately
+// excludes "Bill" (the accrual-side posting — its later "Bill Payment" is the
+// real cash movement, counting both would double-count and distort cadence),
+// "Credit Card Credit" (a refund/credit, not a charge — QBO records the
+// charge itself as a plain "Expense" against the card), and every
+// revenue/administrative type (Invoice, Payment, Deposit, Credit Memo,
+// Payroll, Journal Entry, Transfer, Inventory Qty Adjust).
+const GL_CASH_OUT_TYPES = new Set(["expense", "check", "bill payment (check)", "credit card payment"]);
+// Only detect recurring patterns in recent activity — a vendor cancelled
+// years ago shouldn't still show up as "recurring."
+const GL_LOOKBACK_MONTHS = 24;
 
 // Fallback list used only if the sheet doesn't yet publish a "Consolidated Flag"
 // column. Once that column exists, entity membership is driven entirely by
@@ -621,6 +671,8 @@ let months = [];            // parsed [{label, year, monthNum, index}]
 let records = [];           // {section, company, standardAccount, values:[...], flag}
 let bsRecords = [];         // {topLevel, category, company, standardAccount, values:[...], flag}
 let socfRecords = [];       // {section, company, standardAccount, values:[...]} — section: Operating/Investing/Financing Activities
+let glRecords = [];         // {date: Date, company, payee, account, amount, memo} — one row per GL transaction
+let glLoadErrors = [];      // [{label, message}] — per-source parse/fetch failures, surfaced on the Recurring Payments tab
 let allCompanies = [];
 let hasFlagColumn = false;
 let entityGroups = { consolidated: [], excludedClassified: [], unclassified: [] };
@@ -741,6 +793,137 @@ function parseMappedRows(text, leadingCols) {
   return { rows, labels, monthEnd, flagCol };
 }
 
+// Parses a date cell from Google Sheets' published CSV. Sheets renders dates
+// as either "M/D/YYYY" or "YYYY-MM-DD" depending on the source column's
+// format — new Date(...) handles both natively in every evergreen browser,
+// this just guards against stray whitespace and empty cells.
+function parseGLDate(s) {
+  if (!s) return null;
+  const d = new Date(String(s).trim());
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// GL Detail source: a RAW QuickBooks "General Ledger" (or "Transaction List
+// by Date") export, not a custom-shaped "Mapped" tab — no reshape needed,
+// since everything the Recurring Payments tab needs is already a literal QBO
+// column. A few report-metadata rows may precede the real header row (QBO's
+// export puts report title/date-range/basis lines at the top), so this scans
+// for the header instead of assuming a fixed offset, then looks every needed
+// column up by name — column order and extra tracking columns (Class,
+// Location, etc.) don't matter, only exact header names do.
+function findGLHeaderRowIndex(rows) {
+  const scanLimit = Math.min(rows.length, 20);
+  for (let i = 0; i < scanLimit; i++) {
+    if ((rows[i][0] || "").trim().toLowerCase() === "date") return i;
+  }
+  return -1;
+}
+
+// A register/bank/CC/loan account name, by QBO convention in this data,
+// always ends in a parenthesized number (e.g. "Discover (3978)",
+// "Checking (7543)", "Cove Mortgage (6257)") — plain expense/income category
+// names never do. Used only to pick the more useful side of a mirrored pair
+// below (which account label to display), never to decide inclusion.
+function looksLikeRegisterAccount(name) {
+  return /\(\d+\)\s*$/.test(name || "");
+}
+
+// One raw QBO transaction can post multiple GL lines, and this report shape
+// has two different ways that shows up:
+//  1. A genuine multi-way split (3+ categories): one bank/register-side
+//     line whose own "Split" cell can't name a single category and just
+//     reads "-Split-", plus one row per category. Its total already appears
+//     once, on that "-Split-" line — the category rows are additional detail,
+//     not additional cash out. Keep only the "-Split-" row.
+//  2. A plain single-category (2-line) posting: QBO still emits BOTH
+//     posting lines as separate rows — one with {account: register,
+//     split: category}, one with {account: category, split: register},
+//     same date/amount — since with only one category there's no need for
+//     an ambiguous "-Split-" placeholder, so both sides get spelled out
+//     directly. Left uncollapsed, every ordinary expense counts twice.
+//     These mirror pairs are matched up (account/split swapped, same
+//     amount) and collapsed to one row, keeping whichever side names the
+//     register account in "account" (so the surviving row's "split" is the
+//     actual expense category, not a bank name).
+// Rows that share a (date, num, type, name) key purely by coincidence
+// (typically: several unrelated same-day "Expense" postings, since QBO
+// doesn't assign those a Num) won't pair up under rule 2 and are left as
+// independent transactions.
+function collapseGLSplitLines(rows) {
+  const groups = new Map();
+  rows.forEach(r => {
+    const gKey = r.date.getTime() + "|" + r.num + "|" + r.type + "|" + r.name;
+    if (!groups.has(gKey)) groups.set(gKey, []);
+    groups.get(gKey).push(r);
+  });
+  const out = [];
+  groups.forEach(groupRows => {
+    const summaryRow = groupRows.find(r => r.split === "-Split-");
+    if (groupRows.length > 1 && summaryRow) { out.push(summaryRow); return; }
+
+    const consumed = new Array(groupRows.length).fill(false);
+    for (let i = 0; i < groupRows.length; i++) {
+      if (consumed[i]) continue;
+      consumed[i] = true;
+      const a = groupRows[i];
+      let mirrorIdx = -1;
+      for (let j = i + 1; j < groupRows.length; j++) {
+        if (consumed[j]) continue;
+        const b = groupRows[j];
+        if (a.account === b.split && a.split === b.account && Math.abs(a.amount) === Math.abs(b.amount)) { mirrorIdx = j; break; }
+      }
+      if (mirrorIdx === -1) { out.push(a); continue; }
+      consumed[mirrorIdx] = true;
+      const b = groupRows[mirrorIdx];
+      out.push(looksLikeRegisterAccount(a.account) || !looksLikeRegisterAccount(b.account) ? a : b);
+    }
+  });
+  return out;
+}
+
+function parseGLRows(text) {
+  const rows = parseCSV(text);
+  const headerIdx = findGLHeaderRowIndex(rows);
+  if (headerIdx === -1) throw new Error('No header row found (looked for a "Date" column in the first 20 rows) — make sure the published range includes the header row');
+  const header = rows[headerIdx].map(h => h.trim().toLowerCase());
+  const col = name => header.indexOf(name);
+  const dateCol = col("date"), typeCol = col("transaction type"), numCol = col("num"),
+    nameCol = col("name"), accountCol = col("account"), splitCol = col("split"),
+    amountCol = col("amount"), companyCol = col("company"), memoCol = col("memo/description");
+  const missing = [["Date", dateCol], ["Transaction Type", typeCol], ["Name", nameCol],
+    ["Split", splitCol], ["Amount", amountCol], ["Company", companyCol]].filter(([, c]) => c === -1);
+  if (missing.length) throw new Error("GL export is missing column(s): " + missing.map(m => m[0]).join(", "));
+
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - GL_LOOKBACK_MONTHS);
+
+  const parsed = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r.length) continue;
+    const type = (r[typeCol] || "").trim();
+    if (!GL_CASH_OUT_TYPES.has(type.toLowerCase())) continue;
+    const date = parseGLDate(r[dateCol]);
+    if (!date || date < cutoff) continue;
+    const name = (r[nameCol] || "").trim();
+    const company = (r[companyCol] || "").trim();
+    if (!name || !company) continue;
+    parsed.push({
+      date, type, num: (r[numCol] || "").trim(), name, company,
+      split: (r[splitCol] || "").trim(),
+      account: accountCol !== -1 ? (r[accountCol] || "").trim() : "",
+      amount: parseNum(r[amountCol]),
+      memo: memoCol !== -1 ? (r[memoCol] || "").trim() : ""
+    });
+  }
+
+  return collapseGLSplitLines(parsed).map(r => ({
+    date: r.date, company: r.company, payee: r.name,
+    account: r.split === "-Split-" ? "Multiple Categories" : (r.split || r.account),
+    amount: Math.abs(r.amount), memo: r.memo
+  }));
+}
+
 async function loadData() {
   const btn = document.getElementById("refreshBtn");
   btn.disabled = true;
@@ -753,6 +936,10 @@ async function loadData() {
   // Remove/Seasonal choices) — fetch in parallel and re-render once loaded
   // so the tab doesn't flash unclassified accounts before settling.
   fetchTypicalOverrides().then(render).catch(() => {});
+  // Recurring Payments tab has its own data domain too (GL Detail CSV +
+  // its own Redis-backed overrides) — neither depends on the P&L load above.
+  fetchGLData().then(renderRecurringPayments).catch(() => {});
+  fetchRecurringOverrides().then(renderRecurringPayments).catch(() => {});
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -840,6 +1027,32 @@ async function loadData() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// Each entity's raw GL export is fetched and parsed independently — one bad
+// export (e.g. a missing header row) shouldn't take down the other entity's
+// data, so failures are collected rather than thrown.
+async function fetchOneGLSource(url, label) {
+  if (!url) return [];
+  try {
+    const text = await fetch(url + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    });
+    return parseGLRows(text);
+  } catch (err) {
+    glLoadErrors.push({ label, message: err.message });
+    return [];
+  }
+}
+
+async function fetchGLData() {
+  glLoadErrors = [];
+  const [personal, business] = await Promise.all([
+    fetchOneGLSource(GL_CSV_URL_PERSONAL, "Personal"),
+    fetchOneGLSource(GL_CSV_URL_BUSINESS, "Business")
+  ]);
+  glRecords = [...personal, ...business];
 }
 
 function buildEntityGroups(flagByCompany) {
@@ -1178,6 +1391,74 @@ function saveTypicalOverrides() {
 
 function typicalAccountKey(group, account, company) {
   return group + "::" + account + "::" + (company || "");
+}
+
+// ---- Recurring Payments tab: per-cluster review state ------------------
+// Each entry is { status: "accepted"|"flagged"|"cancelled"|undefined,
+// category: string|undefined, notes: string|undefined }, keyed by
+// recurringClusterKey() (see detectRecurringPayments) — a separate Redis
+// document from typicalOverrides since this is a wholly different review
+// workflow (subscription cancellation, not budget classification).
+let recurringOverrides = {};
+let recurringOverridesLoaded = false;
+let recurringSaveTimer = null;
+
+async function fetchRecurringOverrides() {
+  try {
+    const resp = await fetch("/api/recurring-overrides", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    recurringOverrides = (await resp.json()) || {};
+  } catch (err) {
+    console.warn("Couldn't load Recurring Payments overrides: " + err.message);
+    recurringOverrides = {};
+  }
+  recurringOverridesLoaded = true;
+}
+
+function saveRecurringOverrides() {
+  const ind = document.getElementById("recurringSaveIndicator");
+  if (ind) { ind.textContent = "Saving…"; ind.className = "save-indicator saving"; }
+  clearTimeout(recurringSaveTimer);
+  recurringSaveTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch("/api/recurring-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: recurringOverrides })
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      if (ind) { ind.textContent = "Saved"; ind.className = "save-indicator"; }
+    } catch (err) {
+      if (ind) { ind.textContent = "Couldn't save: " + err.message; ind.className = "save-indicator error"; }
+    }
+  }, 500);
+}
+
+function recurringStatusOf(key) { return recurringOverrides[key] && recurringOverrides[key].status; }
+function recurringCategoryOf(key) { return recurringOverrides[key] && recurringOverrides[key].category; }
+function recurringNotesOf(key) { return recurringOverrides[key] && recurringOverrides[key].notes; }
+
+function setRecurringStatus(key, status) {
+  const entry = recurringOverrides[key] || {};
+  if (!status) delete entry.status; else entry.status = status;
+  if (!entry.status && !entry.category && !entry.notes) delete recurringOverrides[key];
+  else recurringOverrides[key] = entry;
+  saveRecurringOverrides();
+  renderRecurringPayments();
+}
+function setRecurringCategory(key, category) {
+  const entry = recurringOverrides[key] || {};
+  if (!category) delete entry.category; else entry.category = category;
+  if (!entry.status && !entry.category && !entry.notes) delete recurringOverrides[key];
+  else recurringOverrides[key] = entry;
+  saveRecurringOverrides();
+}
+function setRecurringNotes(key, notes) {
+  const entry = recurringOverrides[key] || {};
+  if (!notes) delete entry.notes; else entry.notes = notes;
+  if (!entry.status && !entry.category && !entry.notes) delete recurringOverrides[key];
+  else recurringOverrides[key] = entry;
+  saveRecurringOverrides();
 }
 
 // Each entry is { status: "removed"|"seasonal"|undefined, budget: number|undefined }.
@@ -2612,6 +2893,11 @@ function pctChange(current, prior) {
 // ---- Render ----
 
 function render() {
+  // Recurring Payments is a wholly separate data domain (GL Detail CSV, own
+  // Redis overrides) — render it unconditionally so it works even before/
+  // without the P&L data below finishing its own load.
+  renderRecurringPayments();
+
   const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const monthVal = document.getElementById("monthSelect").value;
@@ -3812,6 +4098,238 @@ function renderHistory(summaryLines, sectionData, companies) {
   });
 }
 
+// ---- Recurring Payments: detection -------------------------------------
+// Source data is glRecords (GL Detail CSV) — a flat transaction list, not
+// the monthly account totals the rest of the app runs on. Detection groups
+// transactions by (company, payee), splits each payee into amount-similar
+// clusters (the same vendor can carry two distinct subscriptions — e.g. two
+// different plan tiers), then keeps only clusters whose charge-to-charge
+// gaps look like a real cadence rather than one-off/irregular activity.
+function normalizePayee(payee) {
+  return payee.trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function median(nums) {
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// Keyed by (company, payee, rounded amount) rather than an opaque ID so a
+// user's Accept/Flag/notes survive across data refreshes as long as the
+// vendor and price stay the same. A real price change mints a "new" cluster
+// on purpose — that's a fair reason to re-review, not a bug.
+function recurringClusterKey(company, normalizedPayee, medianAmount) {
+  return company + "::" + normalizedPayee + "::" + Math.round(medianAmount);
+}
+
+// dates: ascending Date[]. Returns "monthly" | "quarterly" | "annual" | null
+// (null = gaps don't look like a consistent recurring pattern).
+function classifyCadence(dates) {
+  if (dates.length < 3) return null;
+  const gaps = [];
+  for (let i = 1; i < dates.length; i++) gaps.push((dates[i] - dates[i - 1]) / 86400000);
+  const gapMedian = median(gaps);
+  const mostlyInRange = (lo, hi) => gaps.filter(g => g >= lo && g <= hi).length / gaps.length >= 0.7;
+  if (gapMedian >= 21 && gapMedian <= 40 && mostlyInRange(18, 45)) return "monthly";
+  if (gapMedian >= 80 && gapMedian <= 100 && mostlyInRange(70, 110)) return "quarterly";
+  if (gapMedian >= 340 && gapMedian <= 390 && mostlyInRange(320, 410)) return "annual";
+  return null;
+}
+
+function detectRecurringPayments() {
+  const groups = new Map(); // "company::NORMALIZEDPAYEE" -> rows[]
+  glRecords.forEach(r => {
+    const gKey = r.company + "::" + normalizePayee(r.payee);
+    if (!groups.has(gKey)) groups.set(gKey, []);
+    groups.get(gKey).push(r);
+  });
+
+  const clusters = [];
+  groups.forEach(rows => {
+    // Greedy amount bucketing: sort ascending, start a new bucket once a
+    // row is both >15% and >$5 away from the current bucket's running
+    // median. Tolerant of normal month-to-month cent drift (tax, usage
+    // fees) without merging two genuinely different subscriptions.
+    const sorted = [...rows].sort((a, b) => a.amount - b.amount);
+    const buckets = [];
+    sorted.forEach(r => {
+      const last = buckets[buckets.length - 1];
+      if (last) {
+        const bucketMedian = median(last.map(x => x.amount));
+        if (Math.abs(r.amount - bucketMedian) <= Math.max(5, bucketMedian * 0.15)) { last.push(r); return; }
+      }
+      buckets.push([r]);
+    });
+
+    buckets.forEach(bucket => {
+      if (bucket.length < 3) return; // need at least 3 charges to call it a pattern, not a coincidence
+      const datesSorted = [...bucket].sort((a, b) => a.date - b.date).map(r => r.date);
+      const cadence = classifyCadence(datesSorted);
+      if (!cadence) return;
+      const medAmount = median(bucket.map(r => r.amount));
+      const accountCounts = new Map();
+      bucket.forEach(r => { if (r.account) accountCounts.set(r.account, (accountCounts.get(r.account) || 0) + 1); });
+      const topAccount = [...accountCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const mostRecent = [...bucket].sort((a, b) => b.date - a.date)[0];
+      const occursPerYear = cadence === "monthly" ? 12 : cadence === "quarterly" ? 4 : 1;
+      clusters.push({
+        key: recurringClusterKey(mostRecent.company, normalizePayee(mostRecent.payee), medAmount),
+        company: mostRecent.company,
+        payee: mostRecent.payee, // most recent row's casing, for display
+        account: topAccount ? topAccount[0] : "",
+        cadence, medianAmount: medAmount, occurrences: bucket.length,
+        annualizedCost: medAmount * occursPerYear,
+        firstDate: datesSorted[0], lastDate: datesSorted[datesSorted.length - 1]
+      });
+    });
+  });
+
+  return clusters.sort((a, b) => b.annualizedCost - a.annualizedCost);
+}
+
+const RECURRING_CADENCE_LABEL = { monthly: "Monthly", quarterly: "Quarterly", annual: "Annual" };
+const RECURRING_STATUS_LABEL = { accepted: "Accepted", flagged: "Flagged", cancelled: "Cancelled" };
+
+function fmtGLDate(d) { return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" }); }
+
+// Generic debounced text cell (Category / Notes columns) — same input
+// styling/focus-preservation pattern as the Budget tab's editTextCell, but
+// takes an onChange callback instead of hardcoding setTypicalMergeAs so it
+// can be reused here.
+function editRecurringTextCell(currentVal, placeholder, focusKey, onChange, wide, listId) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "merge-input";
+  if (wide) input.style.width = "160px";
+  input.placeholder = placeholder;
+  input.value = currentVal || "";
+  if (listId) input.setAttribute("list", listId);
+  input.addEventListener("input", () => { onChange(input.value.trim()); withFocusPreserved(renderRecurringPayments); });
+  input.setAttribute("data-focus-key", focusKey);
+  td.appendChild(input);
+  return td;
+}
+
+function renderRecurringPayments() {
+  const table = document.getElementById("recurringTable");
+  if (!table) return; // panel not in the DOM yet on first paint
+  table.innerHTML = "";
+
+  const subEl = document.getElementById("recurringSub");
+  if (!GL_CSV_URL_PERSONAL && !GL_CSV_URL_BUSINESS) {
+    subEl.textContent = "Not configured yet — set GL_CSV_URL_PERSONAL / GL_CSV_URL_BUSINESS to enable this tab.";
+    return;
+  }
+  const errorPrefix = glLoadErrors.length
+    ? glLoadErrors.map(e => `${e.label} GL: ${e.message}`).join(" · ") + " — "
+    : "";
+  if (!glRecords.length) {
+    subEl.textContent = errorPrefix + (glLoadErrors.length ? "no other GL data loaded." : "Loading GL data…");
+    return;
+  }
+
+  const clusters = detectRecurringPayments();
+  const filterEl = document.getElementById("recurringStatusFilter");
+  const filter = filterEl ? filterEl.value : "all";
+  const visible = clusters.filter(c => {
+    const status = recurringStatusOf(c.key) || "needsReview";
+    return filter === "all" || filter === status;
+  });
+
+  const totalAnnual = clusters.reduce((sum, c) => sum + c.annualizedCost, 0);
+  const flaggedAnnual = clusters.filter(c => recurringStatusOf(c.key) === "flagged").reduce((sum, c) => sum + c.annualizedCost, 0);
+  subEl.textContent = errorPrefix + `${clusters.length} recurring payment${clusters.length === 1 ? "" : "s"} detected, ${fmtMoney(totalAnnual)}/year combined` +
+    (flaggedAnnual ? ` — ${fmtMoney(flaggedAnnual)}/year currently flagged for cancellation.` : ".");
+
+  // Feeds every Category input's <datalist> so previously-typed categories
+  // show up as suggestions without forcing a fixed taxonomy.
+  const categoryList = document.getElementById("recurringCategoryList");
+  if (categoryList) {
+    categoryList.innerHTML = "";
+    const seen = new Set();
+    Object.values(recurringOverrides).forEach(o => { if (o.category && !seen.has(o.category)) { seen.add(o.category); categoryList.appendChild(new Option(o.category)); } });
+  }
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Payee", "Account", "Company", "Frequency", "Amount", "Occurrences", "Annualized", "Last Charged", "Status", "Category", "Notes"]
+    .forEach(label => headRow.appendChild(th(label)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  if (!visible.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 11;
+    td.className = "detail";
+    td.textContent = clusters.length ? "No recurring payments match this filter." : "No recurring payments detected yet.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+  visible.forEach(c => {
+    const status = recurringStatusOf(c.key);
+    const tr = document.createElement("tr");
+    tr.className = "detail";
+
+    const payeeTd = document.createElement("td");
+    payeeTd.className = "label-col";
+    payeeTd.textContent = c.payee;
+    tr.appendChild(payeeTd);
+
+    [c.account, c.company, RECURRING_CADENCE_LABEL[c.cadence]].forEach(text => {
+      const td = document.createElement("td");
+      td.textContent = text || "—";
+      tr.appendChild(td);
+    });
+    const amountTd = document.createElement("td"); amountTd.textContent = fmtMoney(c.medianAmount); tr.appendChild(amountTd);
+    const occTd = document.createElement("td"); occTd.textContent = c.occurrences; tr.appendChild(occTd);
+    const annualTd = document.createElement("td"); annualTd.textContent = fmtMoney(c.annualizedCost); tr.appendChild(annualTd);
+    const lastTd = document.createElement("td"); lastTd.textContent = fmtGLDate(c.lastDate); tr.appendChild(lastTd);
+
+    const statusTd = document.createElement("td");
+    statusTd.className = "row-actions";
+    if (status) {
+      const badge = document.createElement("span");
+      badge.className = "status-badge status-" + status;
+      badge.textContent = RECURRING_STATUS_LABEL[status];
+      statusTd.appendChild(badge);
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button"; clearBtn.className = "btn-secondary";
+      clearBtn.textContent = "↩ Reset";
+      clearBtn.addEventListener("click", () => setRecurringStatus(c.key, null));
+      statusTd.appendChild(clearBtn);
+    } else {
+      const acceptBtn = document.createElement("button");
+      acceptBtn.type = "button"; acceptBtn.className = "btn-success";
+      acceptBtn.textContent = "✓ Accept";
+      acceptBtn.addEventListener("click", () => setRecurringStatus(c.key, "accepted"));
+      const flagBtn = document.createElement("button");
+      flagBtn.type = "button"; flagBtn.className = "btn-danger";
+      flagBtn.textContent = "⚑ Flag";
+      flagBtn.addEventListener("click", () => setRecurringStatus(c.key, "flagged"));
+      statusTd.appendChild(acceptBtn);
+      statusTd.appendChild(flagBtn);
+    }
+    if (status === "flagged") {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button"; cancelBtn.className = "btn-secondary";
+      cancelBtn.textContent = "Mark Cancelled";
+      cancelBtn.addEventListener("click", () => setRecurringStatus(c.key, "cancelled"));
+      statusTd.appendChild(cancelBtn);
+    }
+    tr.appendChild(statusTd);
+
+    tr.appendChild(editRecurringTextCell(recurringCategoryOf(c.key), "—", c.key + "_cat", v => setRecurringCategory(c.key, v), false, "recurringCategoryList"));
+    tr.appendChild(editRecurringTextCell(recurringNotesOf(c.key), "Notes…", c.key + "_notes", v => setRecurringNotes(c.key, v), true));
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
 // Card order deliberately differs from the table's top-to-bottom P&L order:
 // 4 "flow" lines on top, then the 3 profitability "stops" (Gross Profit,
 // Operating Income, Net Income) on the bottom row — how this client trains
@@ -4493,6 +5011,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-compare").hidden = name !== "compare";
     document.getElementById("panel-history").hidden = name !== "history";
     document.getElementById("panel-bizlines").hidden = name !== "bizlines";
+    document.getElementById("panel-recurring").hidden = name !== "recurring";
     document.getElementById("panel-retireyear").hidden = name !== "retireyear";
     document.getElementById("panel-retire12").hidden = name !== "retire12";
   });
@@ -4505,6 +5024,7 @@ document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
 document.querySelectorAll('input[name="historyBasis"]').forEach(el => el.addEventListener("change", render));
+document.getElementById("recurringStatusFilter").addEventListener("change", renderRecurringPayments);
 
 document.getElementById("retireYearSelect").addEventListener("change", renderRetireYearTab);
 document.getElementById("retireAddYearBtn").addEventListener("click", () => {
