@@ -145,12 +145,25 @@
   .section-sub { font-size: 12px; color: var(--muted); margin: -2px 0 10px; }
 
   /* ---- Statement table ---- */
-  .table-wrap { background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: auto; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
+  /* Bounded max-height turns .table-wrap into its own scrollable pane instead
+     of an ever-growing div the page scrolls past — that's what actually
+     makes thead's `position: sticky; top: 0` (below) hold in place: sticky
+     only "sticks" within a genuinely scrolling ancestor. --sticky-top-h is
+     the measured height of the entity/month/tabs bar at the top of the page
+     (see updateStickyTopHeight()), so the table gets almost the full
+     remaining viewport rather than an arbitrary guess. */
+  .table-wrap { background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: calc(100vh - var(--sticky-top-h, 0px) - 48px); box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
   table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
   th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid #eef1f5; }
-  thead th { position: sticky; top: 0; background: var(--navy); color: #fff; font-weight: 600; z-index: 3; font-size: 11.5px; }
-  thead tr.grp-head th { top: 0; z-index: 3; }
-  thead tr.sub-head th { top: 25px; z-index: 3; font-size: 10.5px; font-weight: 500; color: #cdd9ea; }
+  /* Sticky goes on <thead> itself, not on each <th> — Chrome/WebKit doesn't
+     reliably stick position:sticky <th> elements (a display:table-header-group
+     quirk on the top/vertical axis; sticky-left on th.label-col, a different
+     axis, works fine on the very same cells). This also means a two-row
+     header (grp-head + sub-head) sticks as one block automatically, so
+     neither row needs its own top offset anymore. */
+  thead { position: sticky; top: 0; z-index: 3; }
+  thead th { background: var(--navy); color: #fff; font-weight: 600; font-size: 11.5px; }
+  thead tr.sub-head th { font-size: 10.5px; font-weight: 500; color: #cdd9ea; }
   th.label-col, td.label-col { position: sticky; left: 0; text-align: left; background: #fff; z-index: 2; min-width: 260px; max-width: 260px; white-space: normal; }
   thead th.label-col { background: var(--navy); z-index: 4; }
   td.mir { background: #eaf1fb; font-weight: 700; }
@@ -191,6 +204,25 @@
   }
   .no-chev { display: inline-block; width: 14px; margin-right: 4px; }
   .expand-toggle { cursor: pointer; }
+
+  /* Small dot instead of an icon glyph, on purpose — a pencil/crayon icon on
+     every row read as visually noisy. Drawn via ::before (not emoji/text
+     content) so size, color, and roundness are fully controlled and stay
+     unnoticeable until hovered or active. */
+  .row-highlight-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; margin-right: 4px; cursor: pointer;
+    user-select: none; vertical-align: -1px;
+  }
+  .row-highlight-toggle::before {
+    content: ""; display: block; width: 6px; height: 6px; border-radius: 50%;
+    background: #c7ccd4; opacity: 0.5;
+  }
+  .row-highlight-toggle:hover::before { opacity: 1; background: #f5c518; }
+  .row-highlight-toggle.active::before { opacity: 1; background: #e0a800; }
+  /* !important: needs to win over both the zebra-stripe rule (tr.detail:nth-
+     child(odd)) and the sticky label column's own explicit background. */
+  tr.row-highlighted td { background: #fff59d !important; }
 
   /* ---- Trend & comparison cards ---- */
   /* Fixed 4 columns so the 7 cards land as 4-on-top / 3-on-bottom (the P&L's
@@ -940,6 +972,10 @@ async function loadData() {
   // its own Redis-backed overrides) — neither depends on the P&L load above.
   fetchGLData().then(renderRecurringPayments).catch(() => {});
   fetchRecurringOverrides().then(renderRecurringPayments).catch(() => {});
+  // Row highlights are read once up front, same as Typical Month overrides —
+  // every table render checks isRowHighlighted() synchronously, so this must
+  // land before the first real render to avoid a flash of unhighlighted rows.
+  fetchRowHighlights().then(render).catch(() => {});
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -1459,6 +1495,56 @@ function setRecurringNotes(key, notes) {
   if (!entry.status && !entry.category && !entry.notes) delete recurringOverrides[key];
   else recurringOverrides[key] = entry;
   saveRecurringOverrides();
+}
+
+// ---- Row highlighting (P&L Statement, Balance Sheet, Cash Flow, Budget,
+// Compare, History) ------------------------------------------------------
+// One shared endpoint/blob for any tab that adds this later, not just P&L —
+// rowKey is expected to already be tab-scoped (e.g. "revenue",
+// "Expenses::Rent") since it's combined with `scope`, not a tab name, to
+// form the storage key. `scope` is whatever "current selection" concept
+// that tab has — here, every table tab shares the same global Entity/
+// Consolidated dropdown, so scope is always entVal — so switching entities
+// shows a different highlight set, matching the intent that a highlight
+// means "this row, for this view," not "this row, everywhere." No debounce:
+// a click is a discrete, infrequent event, not per-keystroke typing like the
+// Budget overrides fields.
+let rowHighlights = {};      // "<scope>::<rowKey>" -> true
+let rowHighlightsLoaded = false;
+
+function rowHighlightKey(scope, rowKey) { return scope + "::" + rowKey; }
+function isRowHighlighted(scope, rowKey) { return !!rowHighlights[rowHighlightKey(scope, rowKey)]; }
+
+async function fetchRowHighlights() {
+  try {
+    const resp = await fetch("/api/row-highlights", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    rowHighlights = (await resp.json()) || {};
+  } catch (err) {
+    console.warn("Couldn't load row highlights: " + err.message);
+    rowHighlights = {};
+  }
+  rowHighlightsLoaded = true;
+}
+
+async function saveRowHighlights() {
+  try {
+    const resp = await fetch("/api/row-highlights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: rowHighlights })
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+  } catch (err) {
+    console.warn("Couldn't save row highlight: " + err.message);
+  }
+}
+
+function toggleRowHighlight(scope, rowKey) {
+  const key = rowHighlightKey(scope, rowKey);
+  if (rowHighlights[key]) delete rowHighlights[key]; else rowHighlights[key] = true;
+  saveRowHighlights();
+  render();
 }
 
 // Each entry is { status: "removed"|"seasonal"|undefined, budget: number|undefined }.
@@ -2944,21 +3030,34 @@ function render() {
     line.pctOfRevenue = { series: divSeries(line.series, revenue), num: line.series, den: revenue };
   });
 
-  renderStatement(summaryLines, sectionData, companies);
+  renderStatement(summaryLines, sectionData, companies, entVal);
   renderCards(summaryLines);
   renderAnalysis(entVal, companies);
   renderCharts(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
-  renderTypicalMonth(summaryLines, sectionData, companies);
-  renderCompare(summaryLines, sectionData, companies);
-  renderHistory(summaryLines, sectionData, companies);
+  renderTypicalMonth(summaryLines, sectionData, companies, entVal);
+  renderCompare(summaryLines, sectionData, companies, entVal);
+  renderHistory(summaryLines, sectionData, companies, entVal);
   renderBusinessLines(companies);
 
   document.getElementById("footerNote").textContent =
     `Showing ${entVal === "__CONSOLIDATED__" ? "Consolidated (" + companies.length + " entities)" : entVal} · ` +
     `Month in review: ${months[currentMonthIdx].label} · Detail accounts with no activity in the trailing 12 months are hidden · All figures rounded to whole dollars.`;
+
+  updateStickyTopHeight();
 }
+
+// Measures the actual rendered height of the sticky entity/month/tabs bar
+// and exposes it as a CSS var so table headers can stick right below it
+// instead of a hardcoded pixel guess — #stickyTop's height genuinely varies
+// (the "Other companies" warning banner shows/hides, controls wrap on
+// narrow windows), so this is recomputed on every render() plus on resize.
+function updateStickyTopHeight() {
+  const el = document.getElementById("stickyTop");
+  if (el) document.documentElement.style.setProperty("--sticky-top-h", el.offsetHeight + "px");
+}
+window.addEventListener("resize", updateStickyTopHeight);
 
 function entityDisplayName(entVal, companies) {
   return entVal === "__CONSOLIDATED__" ? `Consolidated (${companies.length} entities)` : entVal;
@@ -3001,7 +3100,7 @@ function buildPeriodThead() {
   return thead;
 }
 
-function renderStatement(summaryLines, sectionData, companies) {
+function renderStatement(summaryLines, sectionData, companies, entVal) {
   document.getElementById("statementSub").textContent =
     `This Month, Year-to-Date, and Trailing 12 Months, each vs. the same period a year ago, anchored on ${months[currentMonthIdx].label}. Click ▸ to expand account detail. Net Income stays pure accrual; "Total Cash Result" below it adds recurring debt principal (a real cash cost that's never a P&L expense) for a blended accrual + cash view of what actually left the bank.`;
 
@@ -3015,17 +3114,26 @@ function renderStatement(summaryLines, sectionData, companies) {
   // Budget tab's layout).
   const expenseGroups = buildExpenseGroupsForDisplay(sectionData);
 
-  function addSummaryRow(label, series, polarity, expandKey) {
+  function addSummaryRow(label, series, polarity, expandKey, rowKey) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
-    tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells, expandKey));
+    const tr = buildRow("summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), cells, expandKey);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
-  function addPctRow(pctOfRevenue, polarity) {
+  function addPctRow(pctOfRevenue, polarity, rowKey) {
     const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
-    tbody.appendChild(buildRow("margin-line", "% of Revenue", cells));
+    const tr = buildRow("margin-line", "% of Revenue", cells);
+    // No highlight toggle of its own — visually follows its parent summary
+    // row above (same conceptual line item) rather than being independently
+    // markable, so a highlighted line reads as one solid block, not two.
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
-  function addDetailRow(label, series, polarity) {
+  function addDetailRow(label, series, polarity, rowKey) {
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
-    tbody.appendChild(buildRow("detail", label, cells));
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), cells);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
   // Sub-headers are themselves clickable to collapse the whole group back —
   // the only other control is the chevron on the summary row above, which
@@ -3049,14 +3157,20 @@ function renderStatement(summaryLines, sectionData, companies) {
   // Same shape as addSummaryRow, but for a Budget-tab-classified subgroup
   // (Auto/Cove/Jasmine/... or Fixed/Variable/Excluded) rather than a raw
   // P&L section — reuses the exact same This-Month/YTD/TTM cell building.
-  function addGroupRow(label, series, expandKey, rowClass, polarity) {
+  // rowKey defaults to expandKey (every group row that can expand already
+  // has a natural unique key there); pass an explicit rowKey for the rare
+  // group row with no expandKey (e.g. a grand-total line).
+  function addGroupRow(label, series, expandKey, rowClass, polarity, rowKey) {
+    rowKey = rowKey || expandKey;
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity || "neg", false);
-    tbody.appendChild(buildRow(rowClass, labelWithChevron(label, expandKey), cells, expandKey));
+    const tr = buildRow(rowClass, labelWithHighlight(label, expandKey, rowKey, entVal), cells, expandKey);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
 
   summaryLines.forEach(line => {
-    addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null);
-    addPctRow(line.pctOfRevenue, line.polarity);
+    addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null, line.key);
+    addPctRow(line.pctOfRevenue, line.polarity, line.key);
     if (!(line.expand && expandedKeys.has(line.key))) return;
 
     // Expenses gets the same Auto/Cove/Jasmine/Ledges/Health + Fixed/
@@ -3076,7 +3190,7 @@ function renderStatement(summaryLines, sectionData, companies) {
           groups.fixedParent.subgroups.forEach(g => {
             const gKey = "stmt_expcat_" + (g.id || "general");
             addGroupRow(g.label, g.series, gKey, "summary-line nested");
-            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
           });
         }
       }
@@ -3086,7 +3200,7 @@ function renderStatement(summaryLines, sectionData, companies) {
         if (!g.rows.length) return;
         const gKey = "stmt_exp_" + g.label.replace(/[^a-z0-9]+/gi, "_");
         addGroupRow(g.label, g.series, gKey, "summary-line");
-        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
       });
       return;
     }
@@ -3099,7 +3213,7 @@ function renderStatement(summaryLines, sectionData, companies) {
         addSubHeader(sectionDisplayLabel(sectionKey), line.key);
       }
       const pol = SECTION_POLARITY[sectionKey] || "pos";
-      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol));
+      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol, sectionKey + "::" + r.account));
     });
   });
 
@@ -3125,7 +3239,7 @@ function renderStatement(summaryLines, sectionData, companies) {
         debtGroups.fixedParent.subgroups.forEach(g => {
           const gKey = "stmt_debtcat_" + (g.id || "general");
           addGroupRow(g.label, g.series, gKey, "summary-line nested");
-          if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+          if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
         });
       }
     }
@@ -3133,18 +3247,18 @@ function renderStatement(summaryLines, sectionData, companies) {
       if (!g.rows.length) return;
       const gKey = "stmt_debt_" + g.label.replace(/[^a-z0-9]+/gi, "_");
       addGroupRow(g.label, g.series, gKey, "summary-line");
-      if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+      if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
     });
-    addGroupRow("Total Recurring Debt Principal", debtGroups.totalSeries, null, "summary-line", "neg");
+    addGroupRow("Total Recurring Debt Principal", debtGroups.totalSeries, null, "summary-line", "neg", "stmt_debttotal");
 
     const cashResultSeries = subSeries(netIncomeLine.series, debtGroups.totalSeries);
-    addGroupRow("Total Cash Result (Net Income − Debt Principal)", cashResultSeries, null, "grandtotal", "pos");
+    addGroupRow("Total Cash Result (Net Income − Debt Principal)", cashResultSeries, null, "grandtotal", "pos", "stmt_cashresult");
 
     if (debtGroups.revolvingGroup.rows.length) {
       addPlainDivider("Revolving Credit Activity — Not Counted Above (HELOC, Lines of Credit, etc.)");
       const revKey = "stmt_debtrevolving";
       addGroupRow(debtGroups.revolvingGroup.label, debtGroups.revolvingGroup.series, revKey, "summary-line");
-      if (expandedKeys.has(revKey)) debtGroups.revolvingGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+      if (expandedKeys.has(revKey)) debtGroups.revolvingGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", revKey + "::" + r.account));
     }
   }
 
@@ -3156,7 +3270,7 @@ function renderStatement(summaryLines, sectionData, companies) {
     addPlainDivider("Seasonal Expenses — Included in Net Income Above");
     const seasonalKey = "stmt_expseasonal";
     addGroupRow(expenseGroups.seasonalGroup.label, expenseGroups.seasonalGroup.series, seasonalKey, "summary-line");
-    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg"));
+    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", seasonalKey + "::" + r.account));
   }
 
   table.appendChild(tbody);
@@ -3166,6 +3280,12 @@ function renderStatement(summaryLines, sectionData, companies) {
       const key = el.dataset.key;
       if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
       render();
+    });
+  });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation(); // the row itself may also carry .expand-toggle
+      toggleRowHighlight(entVal, el.dataset.rowKey);
     });
   });
 }
@@ -3198,6 +3318,26 @@ function labelWithChevron(label, expandKey) {
   // is clickable, not just this glyph — this span is purely visual.
   const isOpen = expandedKeys.has(expandKey);
   return `<span class="chev">${isOpen ? "▾" : "▸"}</span>${escapeHtml(label)}`;
+}
+
+// Same as labelWithChevron, plus a highlight-toggle dot — used by every
+// table tab that supports row highlighting (P&L Statement, Balance Sheet,
+// Cash Flow, Budget, Compare, History). `scope` is whatever "current
+// selection" concept that tab has (entVal, here, for every one of them —
+// they all share the same global Entity/Consolidated dropdown) — rowKey is
+// looked up against it (see isRowHighlighted) so the same row shows
+// highlighted only under whichever selection it was actually marked under.
+// The toggle's own click handler must stopPropagation(): unlike the chevron,
+// which is purely visual, a row with an expandKey also carries the row-level
+// "expand-toggle" click handler (see buildRow) — without stopping
+// propagation, clicking the dot would also collapse/expand the row.
+function labelWithHighlight(label, expandKey, rowKey, scope) {
+  const chevronHtml = expandKey
+    ? `<span class="chev">${expandedKeys.has(expandKey) ? "▾" : "▸"}</span>`
+    : `<span class="no-chev"></span>`;
+  const isHi = isRowHighlighted(scope, rowKey);
+  const hlHtml = `<span class="row-highlight-toggle${isHi ? " active" : ""}" data-row-key="${escapeHtml(rowKey)}" title="Highlight this row for presenting"></span>`;
+  return chevronHtml + hlHtml + escapeHtml(label);
 }
 
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -3273,11 +3413,16 @@ function renderBalanceSheet(entVal, companies) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  function addLine(label, values, expandKey, rowClass) {
-    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildBsCells(values, currentMonthIdx), expandKey));
+  function addLine(label, values, expandKey, rowClass, rowKey) {
+    rowKey = rowKey || expandKey;
+    const tr = buildRow(rowClass || "summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), buildBsCells(values, currentMonthIdx), expandKey);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
-  function addDetail(label, values) {
-    tbody.appendChild(buildRow("detail", label, buildBsCells(values, currentMonthIdx)));
+  function addDetail(label, values, rowKey) {
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildBsCells(values, currentMonthIdx));
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
   function addSubHeader(label) {
     tbody.appendChild(buildRow("section-sub-header", label, BS_COL_LABELS.map(() => ({ text: "" }))));
@@ -3295,24 +3440,24 @@ function renderBalanceSheet(entVal, companies) {
       addInto(total, catTotal);
       const key = "bs_" + cat;
       addLine(BS_CATEGORY_LABEL[cat], catTotal, key);
-      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values));
+      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values, key + "::" + r.account));
     });
     return total;
   }
 
   addSubHeader("Assets");
   const totalAssets = addGroup(BS_CATEGORY_ORDER.assets);
-  addLine("Total Assets", totalAssets, null, "grandtotal");
+  addLine("Total Assets", totalAssets, null, "grandtotal", "bs_totalAssets");
 
   addSubHeader("Liabilities");
   const totalLiab = addGroup(BS_CATEGORY_ORDER.liabilities);
-  addLine("Total Liabilities", totalLiab, null, "summary-line");
+  addLine("Total Liabilities", totalLiab, null, "summary-line", "bs_totalLiab");
 
   addSubHeader("Equity");
   const totalEquity = addGroup(BS_CATEGORY_ORDER.equity);
 
   const totalLiabEquity = addSeries(totalLiab, totalEquity);
-  addLine("Total Liabilities & Equity", totalLiabEquity, null, "grandtotal");
+  addLine("Total Liabilities & Equity", totalLiabEquity, null, "grandtotal", "bs_totalLiabEquity");
 
   table.appendChild(tbody);
 
@@ -3321,6 +3466,12 @@ function renderBalanceSheet(entVal, companies) {
       const key = el.dataset.key;
       if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
       render();
+    });
+  });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowHighlight(entVal, el.dataset.rowKey);
     });
   });
 
@@ -3351,25 +3502,30 @@ function renderCashFlow(entVal, companies) {
   table.appendChild(buildPeriodThead());
 
   const tbody = document.createElement("tbody");
-  function addSummary(label, series, expandKey, rowClass) {
-    tbody.appendChild(buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false), expandKey));
+  function addSummary(label, series, expandKey, rowClass, rowKey) {
+    rowKey = rowKey || expandKey;
+    const tr = buildRow(rowClass || "summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false), expandKey);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
-  function addDetail(label, series) {
-    tbody.appendChild(buildRow("detail", label, buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false)));
+  function addDetail(label, series, rowKey) {
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false));
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
   }
   function addSubHeader(label) {
     const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
     tbody.appendChild(buildRow("section-sub-header", label, blanks));
   }
   function addDetailRows(rows, expandKey) {
-    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values));
+    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values, expandKey + "::" + r.account + "::" + r.company));
   }
 
-  addSummary("Net Income", model.netIncome, null);
+  addSummary("Net Income", model.netIncome, null, null, "cf_netIncome");
   const nonCashKey = "cf_nonCash";
   addSummary("Non-Cash Add-backs (Depreciation & Amortization)", model.nonCash.total, nonCashKey);
   addDetailRows(model.nonCash.rows, nonCashKey);
-  addSummary("Cash Earnings", model.cashEarnings, null, "grandtotal");
+  addSummary("Cash Earnings", model.cashEarnings, null, "grandtotal", "cf_cashEarnings");
 
   addSubHeader("Use of Funds — Where the Cash Went");
   const debtKey = "cf_debt";
@@ -3386,8 +3542,8 @@ function renderCashFlow(entVal, companies) {
     addDetailRows(model.unclassified.rows, unclassKey);
   }
 
-  addSummary("Total Use of Funds", model.useOfFunds, null, "grandtotal");
-  addSummary("Net Cash Change (Before Operating Balance Timing)", model.netChangeExWorkingCapital, null, "grandtotal");
+  addSummary("Total Use of Funds", model.useOfFunds, null, "grandtotal", "cf_totalUseOfFunds");
+  addSummary("Net Cash Change (Before Operating Balance Timing)", model.netChangeExWorkingCapital, null, "grandtotal", "cf_netChangeExWC");
 
   addSubHeader("Disclosed Separately — Not Counted as Use of Funds");
   const wcKey = "cf_workingCapital";
@@ -3400,7 +3556,7 @@ function renderCashFlow(entVal, companies) {
     addDetailRows(model.distribution.rows, distKey);
   }
 
-  addSummary("Net Increase / (Decrease) in Cash — All-In", model.netChangeAll, null, "grandtotal");
+  addSummary("Net Increase / (Decrease) in Cash — All-In", model.netChangeAll, null, "grandtotal", "cf_netChangeAll");
 
   table.appendChild(tbody);
   tbody.querySelectorAll(".expand-toggle").forEach(el => {
@@ -3408,6 +3564,12 @@ function renderCashFlow(entVal, companies) {
       const key = el.dataset.key;
       if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
       render();
+    });
+  });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowHighlight(entVal, el.dataset.rowKey);
     });
   });
 
@@ -3529,7 +3691,7 @@ const COVE_LOAN_RE = /^Cove Mortgage/i;
 const JASMINE_LOAN_RE = /^Jasmine Mortgage/i;
 const LEDGES_LOAN_RE = /^Loan on Ledges Townhome/i;
 
-function renderTypicalMonth(summaryLines, sectionData, companies) {
+function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   const endIdx = currentMonthIdx;
   const n = monthLabels.length;
   function windowAvg(series, months) { return trailingAverage(series, endIdx, months); }
@@ -3569,11 +3731,15 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
   // budget here is always a computed roll-up, never directly editable.
-  function addComputedRow(label, series, budgetVal, rowClass, expandKey) {
+  // rowKey defaults to expandKey; pass an explicit rowKey for a row with no
+  // expandKey (e.g. a grand-total line).
+  function addComputedRow(label, series, budgetVal, rowClass, expandKey, rowKey) {
+    rowKey = rowKey || expandKey;
     const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "N/A" : fmtWhole(v) }; });
     cells.push({ text: fmtWhole(budgetVal) });
     cells.push({ text: fmtWhole(budgetVal * 12) });
-    const tr = buildRow(rowClass || "summary-line", labelWithChevron(label, expandKey), cells, expandKey);
+    const tr = buildRow(rowClass || "summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), cells, expandKey);
+    if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tr.appendChild(document.createElement("td")); // Merge As
     tr.appendChild(document.createElement("td")); // Category
     tr.appendChild(document.createElement("td")); // Type
@@ -3592,9 +3758,10 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
     const status = statusOf(key);
     const tr = document.createElement("tr");
     tr.className = "detail";
+    if (isRowHighlighted(entVal, key)) tr.classList.add("row-highlighted");
     const labelTd = document.createElement("td");
     labelTd.className = "label-col";
-    labelTd.textContent = label;
+    labelTd.innerHTML = labelWithHighlight(label, null, key, entVal);
     tr.appendChild(labelTd);
     AVG_WINDOWS.forEach(w => {
       const v = windowAvg(series, w.months);
@@ -3739,7 +3906,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
       // to expense-style positive so it sums consistently with the P&L
       // accounts above instead of subtracting from them. Kept even when
       // currently $0 (e.g. Ledges has no recent payments) — it still shows
-      // real activity in the longer 3-Yr/5-Yr windows, which is the point.
+      // real activity in the longer 3-Yr window, which is the point.
       const expenseSigned = r.values.map(v => -v);
       addInto(series, expenseSigned);
       budget += budgetOf(k, expenseSigned);
@@ -3854,7 +4021,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
 
   const typicalCashSeries = addSeries(adjNetIncome, debtSeries);
   const typicalCashBudget = budgetNetIncome + debtBudget;
-  addComputedRow("Typical Monthly Cash Available (Net Income − Debt Service)", typicalCashSeries, typicalCashBudget, "grandtotal");
+  addComputedRow("Typical Monthly Cash Available (Net Income − Debt Service)", typicalCashSeries, typicalCashBudget, "grandtotal", null, "typ_cash");
 
   if (revolving.length) {
     addSubHeader("Revolving Credit Activity — Not Counted Above (HELOC, Lines of Credit, etc.)");
@@ -3900,7 +4067,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
       seasonalBudget += budgetOf(r.key, r.series);
       if (expandedKeys.has(seasonalKey)) addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable });
     });
-    addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null);
+    addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null, "typ_totalSeasonal");
   }
 
   const removedRows = allAccountRows.filter(r => statusOf(r.key) === "removed");
@@ -3921,6 +4088,12 @@ function renderTypicalMonth(summaryLines, sectionData, companies) {
       render();
     });
   });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowHighlight(entVal, el.dataset.rowKey);
+    });
+  });
 }
 
 // Favorable/unfavorable direction per top-level Budget-tree line, used by
@@ -3936,7 +4109,7 @@ const BUDGET_NODE_POLARITY = {
 // ---- Actual vs Budget screen -------------------------------------------
 // This Month + Year-to-Date, each as Actual/Budget/$ Diff/% Diff, built from
 // the exact same buildBudgetTree() the Budget tab itself is built from.
-function renderCompare(summaryLines, sectionData, companies) {
+function renderCompare(summaryLines, sectionData, companies, entVal) {
   const model = buildSocfCashFlowModel(companies);
   const tree = buildBudgetTree(summaryLines, sectionData, model);
   const endIdx = currentMonthIdx;
@@ -3991,11 +4164,17 @@ function renderCompare(summaryLines, sectionData, companies) {
     const hasChildren = node.children.length > 0;
     const expandKey = hasChildren ? "cmp_" + node.key : null;
     const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
-    tbody.appendChild(buildRow(rowClass, labelWithChevron(node.label, expandKey), cellsFor(node, polarity), expandKey));
+    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node, polarity), expandKey);
+    if (isRowHighlighted(entVal, node.key)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
     if (hasChildren && expandedKeys.has(expandKey)) {
       node.children.forEach(child => {
         if (child.children.length) addNode(child, polarity, depth + 1);
-        else tbody.appendChild(buildRow("detail", child.label, cellsFor(child, polarity)));
+        else {
+          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child, polarity));
+          if (isRowHighlighted(entVal, child.key)) childTr.classList.add("row-highlighted");
+          tbody.appendChild(childTr);
+        }
       });
     }
   }
@@ -4008,6 +4187,12 @@ function renderCompare(summaryLines, sectionData, companies) {
       const key = el.dataset.key;
       if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
       render();
+    });
+  });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowHighlight(entVal, el.dataset.rowKey);
     });
   });
 }
@@ -4045,7 +4230,7 @@ function historyPeriods(basis, endIdx) {
   return periods;
 }
 
-function renderHistory(summaryLines, sectionData, companies) {
+function renderHistory(summaryLines, sectionData, companies, entVal) {
   const model = buildSocfCashFlowModel(companies);
   const tree = buildBudgetTree(summaryLines, sectionData, model);
   const endIdx = currentMonthIdx;
@@ -4078,11 +4263,17 @@ function renderHistory(summaryLines, sectionData, companies) {
     const hasChildren = node.children.length > 0;
     const expandKey = hasChildren ? "hist_" + node.key : null;
     const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
-    tbody.appendChild(buildRow(rowClass, labelWithChevron(node.label, expandKey), cellsFor(node), expandKey));
+    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node), expandKey);
+    if (isRowHighlighted(entVal, node.key)) tr.classList.add("row-highlighted");
+    tbody.appendChild(tr);
     if (hasChildren && expandedKeys.has(expandKey)) {
       node.children.forEach(child => {
         if (child.children.length) addNode(child, depth + 1);
-        else tbody.appendChild(buildRow("detail", child.label, cellsFor(child)));
+        else {
+          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child));
+          if (isRowHighlighted(entVal, child.key)) childTr.classList.add("row-highlighted");
+          tbody.appendChild(childTr);
+        }
       });
     }
   }
@@ -4094,6 +4285,12 @@ function renderHistory(summaryLines, sectionData, companies) {
       const key = el.dataset.key;
       if (expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
       render();
+    });
+  });
+  tbody.querySelectorAll(".row-highlight-toggle").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleRowHighlight(entVal, el.dataset.rowKey);
     });
   });
 }
@@ -4839,7 +5036,7 @@ function renderCharts(companies, summaryLines) {
   renderLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), pctPoints, { isPct: true });
 }
 
-// Trailing 3/6/12-mo and 3/5-yr averages for the selected account, same
+// Trailing 3/6/12-mo and 3-yr averages for the selected account, same
 // AVG_WINDOWS/trailingAverage helpers the summary cards use, reused here.
 function renderChartAvgChips(containerId, series, denSeries, endIdx, polarity, isPct) {
   const row = document.getElementById(containerId);
