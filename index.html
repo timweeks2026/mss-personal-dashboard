@@ -384,6 +384,7 @@
   <button class="tab-btn active" data-tab="statement" type="button">P&amp;L Statement</button>
   <button class="tab-btn" data-tab="analysis" type="button">Changes Analysis</button>
   <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
+  <button class="tab-btn" data-tab="fiveyear" type="button">5-Year Trends</button>
   <button class="tab-btn" data-tab="balancesheet" type="button">Balance Sheet</button>
   <button class="tab-btn" data-tab="cashflow" type="button">Cash Flow</button>
   <button class="tab-btn" data-tab="typical" type="button">Budget</button>
@@ -477,6 +478,40 @@
           <div class="chart-svg-wrap">
             <svg id="chartPct"></svg>
             <div class="chart-tooltip" id="chartPctTooltip"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="panel-fiveyear" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">5-Year Trends</h2>
+      <div class="section-sub">Compare a P&amp;L line across the last 5 years, by calendar month and cumulative year-to-date, for the entity selected above.</div>
+      <div class="inline-control">
+        <label for="fiveYearLineSelect">P&amp;L Line</label>
+        <select id="fiveYearLineSelect"></select>
+      </div>
+      <div id="fiveYearContent">
+        <div class="section-sub" id="fiveYearHeading" style="font-weight:600; color:var(--navy);"></div>
+        <div class="chart-card">
+          <div class="chart-card-head">
+            <div class="chart-card-title">By Month</div>
+            <div class="chip-row compact" id="fiveYearMonthLegend"></div>
+          </div>
+          <div class="chart-svg-wrap">
+            <svg id="fiveYearMonthChart"></svg>
+            <div class="chart-tooltip" id="fiveYearMonthTooltip"></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-head">
+            <div class="chart-card-title">Year-to-Date by Month</div>
+            <div class="chip-row compact" id="fiveYearYtdLegend"></div>
+          </div>
+          <div class="chart-svg-wrap">
+            <svg id="fiveYearYtdChart"></svg>
+            <div class="chart-tooltip" id="fiveYearYtdTooltip"></div>
           </div>
         </div>
       </div>
@@ -688,6 +723,11 @@ const CORE_ENTITIES = [
 
 const SECTION_KEYS = ["Income", "Cost of Goods Sold", "Expenses", "Other Income", "Other Expenses"];
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// 5-Year Trends tab: sequential blue ramp, oldest year first (lightest) to
+// the current year last (darkest, matches --navy). One-line swap per client.
+const FIVE_YEAR_PALETTE = ["#cfe3f7", "#8fc4e8", "#4a9bd9", "#1a73e8", "#0f2a4a"];
+const FIVE_YEAR_COUNT = 5;
 const AVG_WINDOWS = [
   { key: "3mo", label: "3-Mo", months: 3 },
   { key: "6mo", label: "6-Mo", months: 6 },
@@ -3034,6 +3074,7 @@ function render() {
   renderCards(summaryLines);
   renderAnalysis(entVal, companies);
   renderCharts(companies, summaryLines);
+  renderFiveYearTrends(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
   renderTypicalMonth(summaryLines, sectionData, companies, entVal);
@@ -5194,6 +5235,170 @@ function renderLineChart(svg, tooltip, points, opts) {
   });
 }
 
+// ---- 5-Year Trends tab ----
+
+function populateFiveYearDropdown(summaryLines) {
+  const sel = document.getElementById("fiveYearLineSelect");
+  const prevValue = sel.value;
+  sel.innerHTML = "";
+  summaryLines.forEach(line => sel.appendChild(new Option(line.label, line.key)));
+  if (prevValue && [...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
+  else if (sel.options.length) sel.selectedIndex = 0;
+}
+
+// Builds FIVE_YEAR_COUNT years ending at the current Month in Review's year
+// (oldest first), each broken into 12 calendar-month buckets. mode "month" =
+// that single month's actual value; mode "ytd" = cumulative Jan..that month.
+// A year/month with no underlying data (history doesn't reach back that far,
+// or a future month within the current year) yields `null`, not 0, so the
+// chart can leave a real gap instead of a misleading zero bar.
+function buildFiveYearGroups(series, endIdx, mode) {
+  const endYear = months[endIdx].year, endMonthNum = months[endIdx].monthNum;
+  const years = [];
+  for (let i = FIVE_YEAR_COUNT - 1; i >= 0; i--) years.push(endYear - i);
+
+  const groups = MONTH_NAMES.map((monthName, mIdx) => {
+    const values = years.map(year => {
+      if (year === endYear && mIdx > endMonthNum) return null;
+      const idx = monthIndexOf(year, mIdx);
+      if (idx < 0) return null;
+      if (mode === "ytd") {
+        const janIdx = monthIndexOf(year, 0);
+        if (janIdx < 0) return null;
+        return sumRange(series, janIdx, idx);
+      }
+      return series[idx];
+    });
+    return { label: monthName, values };
+  });
+  return { years, groups };
+}
+
+function renderFiveYearLegend(containerId, years) {
+  const row = document.getElementById(containerId);
+  row.innerHTML = "";
+  years.forEach((year, i) => {
+    const chip = document.createElement("div");
+    chip.style.cssText = "display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--muted);";
+    chip.innerHTML = `<span style="width:9px;height:9px;border-radius:2px;background:${FIVE_YEAR_PALETTE[i] || "#1a73e8"};display:inline-block;"></span>${year}`;
+    row.appendChild(chip);
+  });
+}
+
+function renderFiveYearTrends(companies, summaryLines) {
+  populateFiveYearDropdown(summaryLines);
+  const sel = document.getElementById("fiveYearLineSelect");
+  const line = summaryLines.find(l => l.key === sel.value) || summaryLines[0];
+  if (!line) return;
+
+  const endIdx = currentMonthIdx;
+  const monthData = buildFiveYearGroups(line.series, endIdx, "month");
+  const ytdData = buildFiveYearGroups(line.series, endIdx, "ytd");
+
+  document.getElementById("fiveYearHeading").textContent =
+    `${line.label} · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
+    `${monthData.years[0]}–${monthData.years[monthData.years.length - 1]}`;
+
+  renderFiveYearLegend("fiveYearMonthLegend", monthData.years);
+  renderFiveYearLegend("fiveYearYtdLegend", ytdData.years);
+
+  renderGroupedBarChart(document.getElementById("fiveYearMonthChart"), document.getElementById("fiveYearMonthTooltip"), monthData.groups, monthData.years);
+  renderGroupedBarChart(document.getElementById("fiveYearYtdChart"), document.getElementById("fiveYearYtdTooltip"), ytdData.groups, ytdData.years);
+}
+
+// Hand-rolled inline SVG grouped bar chart (12 calendar-month groups, one bar
+// per year within each group) — same dependency-free approach as
+// renderLineChart. `groups` is MONTH_NAMES-ordered [{label, values}] where
+// values[i] aligns with years[i] (oldest first); a null value leaves a gap.
+function renderGroupedBarChart(svg, tooltip, groups, years) {
+  const W = 860, H = 220;
+  const padL = 68, padR = 20, padT = 16, padB = 40;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const NS = "http://www.w3.org/2000/svg";
+
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = "";
+  tooltip.style.display = "none";
+
+  if (!groups.length) return;
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function textEl(x, y, str, attrs) {
+    const t = el("text", Object.assign({ x, y }, attrs));
+    t.textContent = str;
+    return t;
+  }
+
+  const allValues = groups.flatMap(g => g.values).filter(v => v != null);
+  const { min: domMin, max: domMax, ticks } = buildNiceTicks(Math.min(0, ...allValues), Math.max(0, ...allValues), 4);
+  const domSpan = (domMax - domMin) || 1;
+
+  const n = groups.length;
+  const groupW = chartW / n;
+  const barCount = years.length;
+  const barGap = groupW * 0.12;
+  const barW = (groupW - barGap) / barCount;
+
+  const yAt = v => padT + chartH - ((v - domMin) / domSpan) * chartH;
+  const y0 = yAt(0);
+
+  ticks.forEach(v => {
+    const y = yAt(v);
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmtMoney(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+  });
+  if (domMin < 0 && domMax > 0) {
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
+  }
+
+  groups.forEach((g, gi) => {
+    const groupX = padL + gi * groupW + barGap / 2;
+    svg.appendChild(textEl(padL + gi * groupW + groupW / 2, padT + chartH + 16, g.label, {
+      "text-anchor": "middle", "font-size": "10", fill: "#6b7684"
+    }));
+    g.values.forEach((val, yi) => {
+      if (val == null) return;
+      const x = groupX + yi * barW;
+      const y = yAt(val);
+      const barTop = Math.min(y, y0);
+      const barH = Math.max(1, Math.abs(y - y0));
+      const rect = el("rect", {
+        x: x + 0.5, y: barTop, width: Math.max(1, barW - 1), height: barH,
+        fill: FIVE_YEAR_PALETTE[yi] || "#1a73e8", rx: 1.5
+      });
+      svg.appendChild(rect);
+
+      rect.addEventListener("pointerenter", () => {
+        tooltip.style.display = "block";
+        tooltip.innerHTML = "";
+        const valEl = document.createElement("div");
+        valEl.className = "chart-tooltip-value";
+        valEl.textContent = fmtMoney(val);
+        const lblEl = document.createElement("div");
+        lblEl.className = "chart-tooltip-label";
+        lblEl.textContent = `${years[yi]} · ${g.label}`;
+        tooltip.appendChild(valEl);
+        tooltip.appendChild(lblEl);
+
+        const rectBox = svg.getBoundingClientRect();
+        const px = ((x + barW / 2) / W) * rectBox.width;
+        const py = (barTop / H) * rectBox.height;
+        let left = px - 55, top = py - 40;
+        if (left < 0) left = 0;
+        if (left + 110 > rectBox.width) left = rectBox.width - 110;
+        tooltip.style.left = Math.max(0, left) + "px";
+        tooltip.style.top = Math.max(0, top) + "px";
+      });
+      rect.addEventListener("pointerleave", () => { tooltip.style.display = "none"; });
+    });
+  });
+}
+
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -5202,6 +5407,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-statement").hidden = name !== "statement";
     document.getElementById("panel-analysis").hidden = name !== "analysis";
     document.getElementById("panel-charts").hidden = name !== "charts";
+    document.getElementById("panel-fiveyear").hidden = name !== "fiveyear";
     document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
     document.getElementById("panel-cashflow").hidden = name !== "cashflow";
     document.getElementById("panel-typical").hidden = name !== "typical";
@@ -5219,6 +5425,7 @@ document.getElementById("regenerateAnalysisBtn").addEventListener("click", gener
 document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
+document.getElementById("fiveYearLineSelect").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
 document.querySelectorAll('input[name="historyBasis"]').forEach(el => el.addEventListener("change", render));
 document.getElementById("recurringStatusFilter").addEventListener("change", renderRecurringPayments);
