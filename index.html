@@ -128,20 +128,10 @@
 
   .radio-group { display: flex; gap: 12px; }
   .radio-group label {
-    display: flex; align-items: center; gap: 5px; font-size: 13px;
+    display: flex; align-items: center; gap: 5px; font-size: 13px; color: #fff;
     margin-bottom: 0; cursor: pointer;
   }
   .radio-group input { cursor: pointer; }
-  /* White label text only makes sense against the header's own dark-navy
-     background ($ Display toggle). A radio group placed in the white
-     content area below (History's Monthly/Quarterly/Yearly, Job-style
-     Monthly/YTD groups) inherited this as a blanket default and rendered
-     white-on-near-white, effectively invisible — scope it to the header
-     specifically instead of making it the generic default, and highlight
-     whichever option is actually checked so the selection is obvious at a
-     glance rather than only visible via the tiny native radio dot. */
-  header .radio-group label { color: #fff; }
-  .radio-group label:has(input:checked) { font-weight: 700; color: var(--accent); }
 
   #statusRow { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
   #status { flex: 1; padding: 8px 28px; font-size: 12.5px; color: var(--muted); background: #eef2f7; }
@@ -600,7 +590,7 @@
       <div class="section-sub" id="historySub"></div>
       <div class="inline-control">
         <div class="radio-group">
-          <label><input type="radio" name="historyBasis" value="monthly" checked> Monthly (Last 13)</label>
+          <label><input type="radio" name="historyBasis" value="monthly" checked> Monthly (Last 12)</label>
           <label><input type="radio" name="historyBasis" value="quarterly"> Quarterly (Last 20)</label>
           <label><input type="radio" name="historyBasis" value="yearly"> Yearly (Last 4 + Current)</label>
         </div>
@@ -777,16 +767,19 @@ const FIVE_YEAR_PALETTES = {
   puBuGn:      { label: "Purple-Teal",   colors: ["#f6eff7", "#bdc9e1", "#67a9cf", "#1c9099", "#016c59"] },
   purples:     { label: "Purples",       colors: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"] },
   buPu:        { label: "Blue-Purple",   colors: ["#edf8fb", "#b3cde3", "#8c96c6", "#8856a7", "#810f7c"] },
-  puRd:        { label: "Purple-Pink",   colors: ["#f1eef6", "#d7b5d8", "#df65b0", "#dd1c77", "#980043"] },
-  rdPu:        { label: "Pink",          colors: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"] },
   reds:        { label: "Reds",          colors: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"] },
   orRd:        { label: "Orange-Red",    colors: ["#fef0d9", "#fdcc8a", "#fc8d59", "#e34a33", "#b30000"] },
   oranges:     { label: "Oranges",       colors: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"] },
-  ylOrBr:      { label: "Amber",         colors: ["#ffffd4", "#fed98e", "#fe9929", "#d95f0e", "#993404"] },
-  ylOrRd:      { label: "Sunset",        colors: ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"] },
-  ylGn:        { label: "Yellow-Green",  colors: ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"] },
-  ylGnBu:      { label: "Lagoon",        colors: ["#ffffcc", "#a1dab4", "#41b6c4", "#2c7fb8", "#253494"] },
-  greys:       { label: "Charcoal",      colors: ["#f0f0f0", "#d9d9d9", "#969696", "#525252", "#1a1a1a"] }
+  greys:       { label: "Charcoal",      colors: ["#f0f0f0", "#d9d9d9", "#969696", "#525252", "#1a1a1a"] },
+  // Swapped in for the light-yellow / hot-pink schemes that read as pastel
+  // rather than professional (per client feedback) — same light-to-dark
+  // structure, just darker/more muted at every stop.
+  slate:       { label: "Slate",         colors: ["#e6ebf0", "#b9c7d6", "#8aa0b8", "#5a7691", "#28394a"] },
+  forest:      { label: "Forest",        colors: ["#e2ebe0", "#b7d0b0", "#84ad79", "#527d49", "#254a20"] },
+  burgundy:    { label: "Burgundy",      colors: ["#ecdcdc", "#cfa3a5", "#a86569", "#7c343a", "#451015"] },
+  bronze:      { label: "Bronze",        colors: ["#ece3d0", "#d3bd8e", "#b3924f", "#8a6b28", "#523d10"] },
+  indigo:      { label: "Indigo",        colors: ["#e1dfee", "#b6afd9", "#8478bd", "#584a94", "#2c2260"] },
+  gunmetal:    { label: "Gunmetal",      colors: ["#e6e8ea", "#bcc2c8", "#8b939c", "#5a636d", "#262b32"] }
 };
 let fiveYearColorScheme = localStorage.getItem("fiveYearColorScheme") || "classicBlue";
 function activeFiveYearPalette() {
@@ -1265,27 +1258,6 @@ function populateEntityDropdown() {
   }
 }
 
-// Default to the last CLOSED calendar month (relative to today's real
-// date), not just "the most recent column with any data" — a partially-
-// populated current month otherwise looks "active" and got selected by
-// default, when in practice this is almost always reviewed as the last
-// full closed period. Falls back to the old most-recent-with-data
-// behavior only if the previous calendar month genuinely isn't in the
-// sheet yet (e.g. the bookkeeper is behind) — never selects a month that
-// doesn't exist in the dropdown.
-function defaultMonthIndex() {
-  const now = new Date();
-  const prevMonthNum = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-  const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-  const exact = months.findIndex(m => m.year === prevYear && m.monthNum === prevMonthNum);
-  if (exact !== -1) return exact;
-  let lastActive = months.length - 1;
-  for (let i = months.length - 1; i >= 0; i--) {
-    if (records.some(r => r.values[i] !== 0)) { lastActive = i; break; }
-  }
-  return lastActive;
-}
-
 function populateMonthDropdown() {
   const sel = document.getElementById("monthSelect");
   const prevValue = sel.value;
@@ -1295,7 +1267,13 @@ function populateMonthDropdown() {
   if (prevValue && [...sel.options].some(o => o.value === prevValue)) {
     sel.value = prevValue;
   } else {
-    sel.value = String(defaultMonthIndex());
+    // Default to the most recent month with any nonzero activity anywhere.
+    let lastActive = months.length - 1;
+    for (let i = months.length - 1; i >= 0; i--) {
+      const hasData = records.some(r => r.values[i] !== 0);
+      if (hasData) { lastActive = i; break; }
+    }
+    sel.value = String(lastActive);
   }
   currentMonthIdx = parseInt(sel.value, 10);
 }
@@ -4356,11 +4334,7 @@ function historyPeriods(basis, endIdx) {
       periods.push({ label: String(y) + (y === endYear ? " (YTD)" : ""), range: (startIdx >= 0 && lastIdx >= 0) ? [startIdx, lastIdx] : null });
     }
   } else {
-    // 13 months, not 12 — with "last closed month" as the default anchor
-    // (see defaultMonthIndex()), this puts the same calendar month a year
-    // ago as the FIRST column, so a same-month-prior-year comparison is
-    // always visible without scrolling, not just implied by a 12-month window.
-    for (let i = 12; i >= 0; i--) {
+    for (let i = 11; i >= 0; i--) {
       const idx = endIdx - i;
       periods.push({ label: idx >= 0 ? months[idx].label : "—", range: idx >= 0 ? [idx, idx] : null });
     }
@@ -4719,7 +4693,6 @@ function renderCards(summaryLines) {
     card.appendChild(cmpWrap);
 
     grid.appendChild(card);
-    if (line.key === "grossProfit") grid.appendChild(buildGrossMarginCard(line));
   });
 }
 
@@ -4777,86 +4750,6 @@ function cmpRow(label, data, polarity) {
   row.innerHTML = `<span class="cmp-label">${label}</span>` +
     `<span class="cmp-value arrow-${arrow.cls}">${deltaStr} <span class="arrow-${arrow.cls}">${arrow.symbol}</span></span>`;
   return row;
-}
-
-// ---- Gross Margin (%) card — Gross Profit ÷ Revenue, shown between the
-// Gross Profit and Operating Income cards. Comparisons here are expressed
-// as percentage-POINT deltas ("+4.2 pts"), not %-change-of-the-ratio: a
-// %-change-of-dollars reading on a margin figure would describe a move in
-// the underlying dollars, not the margin itself. ----
-function marginForRange(numSeries, denSeries, start, end) {
-  const num = sumRange(numSeries, start, end);
-  const den = sumRange(denSeries, start, end);
-  return den ? num / den : null;
-}
-function pyMonthMarginCompare(numSeries, denSeries) {
-  const idx = currentMonthIdx, pyIdx = idx - 12;
-  if (pyIdx < 0) return null;
-  const cur = denSeries[idx] ? numSeries[idx] / denSeries[idx] : null;
-  const pri = denSeries[pyIdx] ? numSeries[pyIdx] / denSeries[pyIdx] : null;
-  if (cur == null || pri == null) return null;
-  return { current: cur, prior: pri };
-}
-function ytdMarginCompare(numSeries, denSeries) {
-  const idx = currentMonthIdx;
-  const y = months[idx].year, m = months[idx].monthNum;
-  const cur = ytdRange(y, m), pri = ytdRange(y - 1, m);
-  if (!cur || !pri) return null;
-  return { current: marginForRange(numSeries, denSeries, cur[0], cur[1]), prior: marginForRange(numSeries, denSeries, pri[0], pri[1]) };
-}
-function ttmMarginCompare(numSeries, denSeries) {
-  const idx = currentMonthIdx;
-  const cur = ttmRange(idx), pri = priorTtmRange(idx);
-  if (!cur || !pri) return null;
-  return { current: marginForRange(numSeries, denSeries, cur[0], cur[1]), prior: marginForRange(numSeries, denSeries, pri[0], pri[1]) };
-}
-function cmpRowPts(label, data, polarity) {
-  const row = document.createElement("div");
-  row.className = "cmp-row";
-  if (!data || data.current == null || data.prior == null) {
-    row.innerHTML = `<span class="cmp-label">${label}</span><span class="cmp-na">Not enough history</span>`;
-    return row;
-  }
-  const arrow = arrowFor(data.current, data.prior, polarity || "pos", 0.0005);
-  const deltaPts = (data.current - data.prior) * 100;
-  const sign = deltaPts > 0 ? "+" : "";
-  row.innerHTML = `<span class="cmp-label">${label}</span>` +
-    `<span class="cmp-value arrow-${arrow.cls}">${sign}${deltaPts.toFixed(1)} pts <span class="arrow-${arrow.cls}">${arrow.symbol}</span></span>`;
-  return row;
-}
-
-// Reads straight off the Gross Profit summary-line's own `pctOfRevenue`
-// (num = Gross Profit series, den = Revenue series) rather than
-// re-deriving anything, so this card can never drift from the Gross
-// Profit card's own % of Revenue figure.
-function buildGrossMarginCard(grossProfitLine) {
-  const numSeries = grossProfitLine.pctOfRevenue.num;
-  const denSeries = grossProfitLine.pctOfRevenue.den;
-  const current = grossProfitLine.pctOfRevenue.series[currentMonthIdx];
-
-  const card = document.createElement("div");
-  card.className = "card emphasis";
-  card.innerHTML =
-    `<div class="card-title">Gross Margin %</div>` +
-    `<div class="card-value">${current == null ? "—" : fmtPct(current)}</div>` +
-    `<div class="card-margin">Gross Profit ÷ Revenue</div>`;
-
-  const chipRow = document.createElement("div");
-  chipRow.className = "chip-row";
-  AVG_WINDOWS.forEach(w => {
-    const avg = trailingAverageRatio(numSeries, denSeries, currentMonthIdx, w.months);
-    chipRow.appendChild(chipFor(w.label, avg, current, "pos", true));
-  });
-  card.appendChild(chipRow);
-
-  const cmpWrap = document.createElement("div");
-  cmpWrap.className = "cmp-rows";
-  cmpWrap.appendChild(cmpRowPts("vs. Same Month, Prior Year", pyMonthMarginCompare(numSeries, denSeries), "pos"));
-  cmpWrap.appendChild(cmpRowPts("YTD vs. Prior-Year YTD", ytdMarginCompare(numSeries, denSeries), "pos"));
-  cmpWrap.appendChild(cmpRowPts("Trailing 12 Mo vs. Prior 12 Mo", ttmMarginCompare(numSeries, denSeries), "pos"));
-  card.appendChild(cmpWrap);
-
-  return card;
 }
 
 // ---- Changes Analysis tab ----
@@ -5572,13 +5465,12 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
       svg.appendChild(rect);
 
       if (labeledYearIdx.has(yi)) {
-        // Current year (darkest bar) labeled 1px smaller than the base size,
-        // the year before that 2px smaller — keeps adjacent bar labels from
-        // colliding while still favoring the current year as most readable.
-        const fontSize = yi === years.length - 1 ? 6.5 : 5.5;
+        // Both labeled years sized down from the original 7.5 base (current
+        // year 2px down, matching the prior year) to stop adjacent bar
+        // labels from colliding.
         const labelY = val >= 0 ? Math.max(padT + 7, y - 3) : Math.min(padT + chartH - 2, y + 9);
         svg.appendChild(textEl(x + barW / 2, labelY, fmtMoneyBare(val), {
-          "text-anchor": "middle", "font-size": String(fontSize), "font-weight": "700", fill: "#3d4a5c"
+          "text-anchor": "middle", "font-size": "5.5", "font-weight": "700", fill: "#3d4a5c"
         }));
       }
 
