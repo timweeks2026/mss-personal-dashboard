@@ -345,6 +345,19 @@
   .chip-row.compact .chip { min-width: 40px; padding: 3px 3px; }
   .chip-row.compact .chip-label { font-size: 8px; }
   .chip-row.compact .chip-value { font-size: 10px; }
+
+  /* ---- 5-Year Trends tab: left-side line picker + narrower charts ---- */
+  .fiveyear-layout { display: flex; align-items: flex-start; gap: 16px; }
+  .fiveyear-picker { flex: 0 0 168px; display: flex; flex-direction: column; gap: 2px; }
+  .fiveyear-line-option {
+    display: flex; align-items: center; gap: 7px; padding: 5px 9px; border-radius: 6px;
+    font-size: 12.5px; color: var(--text); cursor: pointer;
+  }
+  .fiveyear-line-option:hover { background: #eef2f7; }
+  .fiveyear-line-option:has(input:checked) { background: var(--accent); color: #fff; font-weight: 600; }
+  .fiveyear-line-option input { cursor: pointer; margin: 0; }
+  .fiveyear-charts { flex: 1; min-width: 0; }
+
   .chart-svg-wrap { position: relative; }
   .chart-svg-wrap svg { width: 100%; height: auto; display: block; }
   .chart-tooltip {
@@ -492,11 +505,9 @@
     <section>
       <h2 class="section-title">5-Year Trends</h2>
       <div class="section-sub">Compare a P&amp;L line across the last 5 years, by calendar month and cumulative year-to-date, for the entity selected above.</div>
-      <div class="inline-control">
-        <label for="fiveYearLineSelect">P&amp;L Line</label>
-        <select id="fiveYearLineSelect"></select>
-      </div>
-      <div id="fiveYearContent">
+      <div class="fiveyear-layout">
+        <div class="fiveyear-picker" id="fiveYearLinePicker"></div>
+        <div class="fiveyear-charts" id="fiveYearContent">
         <div class="section-sub" id="fiveYearHeading" style="font-weight:600; color:var(--navy);"></div>
         <div class="chart-card compact">
           <div class="chart-card-head">
@@ -517,6 +528,7 @@
             <svg id="fiveYearYtdChart"></svg>
             <div class="chart-tooltip" id="fiveYearYtdTooltip"></div>
           </div>
+        </div>
         </div>
       </div>
     </section>
@@ -837,6 +849,19 @@ function fmtWhole(n) {
   const abs = Math.abs(r);
   const s = abs.toLocaleString("en-US");
   return r < 0 ? `(${s})` : s;
+}
+
+// Same as fmtMoney (respects the $ Display / In Thousands toggle) but with
+// the "$" dropped — used for the 5-Year Trends bar labels, where the y-axis
+// already establishes the units and repeating "$" on every bar is just noise.
+function fmtMoneyBare(n) {
+  if (n == null || !isFinite(n)) return "—";
+  const scaled = scaleMode === "thousands" ? n / 1000 : n;
+  const suffix = scaleMode === "thousands" ? "K" : "";
+  const r = Math.round(scaled);
+  const abs = Math.abs(r);
+  const s = abs.toLocaleString("en-US");
+  return r < 0 ? `(${s}${suffix})` : `${s}${suffix}`;
 }
 
 function fmtPct(n) {
@@ -5241,13 +5266,28 @@ function renderLineChart(svg, tooltip, points, opts) {
 
 // ---- 5-Year Trends tab ----
 
-function populateFiveYearDropdown(summaryLines) {
-  const sel = document.getElementById("fiveYearLineSelect");
-  const prevValue = sel.value;
-  sel.innerHTML = "";
-  summaryLines.forEach(line => sel.appendChild(new Option(line.label, line.key)));
-  if (prevValue && [...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
-  else if (sel.options.length) sel.selectedIndex = 0;
+// Rebuilt on every render (cheap, 7 options) — the currently-checked value is
+// read before clearing so re-renders (entity change, month change, etc.)
+// don't reset the user's selection. A single delegated "change" listener on
+// the container (wired once, outside this function) handles all of them.
+function populateFiveYearPicker(summaryLines) {
+  const container = document.getElementById("fiveYearLinePicker");
+  const prevChecked = container.querySelector('input[name="fiveYearLine"]:checked');
+  const prevValue = prevChecked ? prevChecked.value : null;
+  const stillValid = prevValue && summaryLines.some(l => l.key === prevValue);
+  container.innerHTML = "";
+  summaryLines.forEach((line, i) => {
+    const id = "fiveYearLine_" + line.key;
+    const label = document.createElement("label");
+    label.className = "fiveyear-line-option";
+    label.htmlFor = id;
+    const input = document.createElement("input");
+    input.type = "radio"; input.name = "fiveYearLine"; input.id = id; input.value = line.key;
+    input.checked = stillValid ? line.key === prevValue : i === 0;
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(line.label));
+    container.appendChild(label);
+  });
 }
 
 // Builds FIVE_YEAR_COUNT years ending at the current Month in Review's year
@@ -5290,9 +5330,9 @@ function renderFiveYearLegend(containerId, years) {
 }
 
 function renderFiveYearTrends(companies, summaryLines) {
-  populateFiveYearDropdown(summaryLines);
-  const sel = document.getElementById("fiveYearLineSelect");
-  const line = summaryLines.find(l => l.key === sel.value) || summaryLines[0];
+  populateFiveYearPicker(summaryLines);
+  const checked = document.querySelector('input[name="fiveYearLine"]:checked');
+  const line = summaryLines.find(l => l.key === (checked && checked.value)) || summaryLines[0];
   if (!line) return;
 
   const endIdx = currentMonthIdx;
@@ -5354,16 +5394,21 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
   ticks.forEach(v => {
     const y = yAt(v);
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
-    svg.appendChild(textEl(padL - 8, y + 3, fmtMoney(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmtMoney(v), { "text-anchor": "end", "font-size": "8.5", fill: "#8a93a0" }));
   });
   if (domMin < 0 && domMax > 0) {
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
   }
 
+  // Only the last 2 years (the 2 darkest bars) get a printed value label —
+  // labeling all 5 would clutter the chart; these are the ones a client is
+  // most likely to want to read off directly rather than hover for.
+  const labeledYearIdx = new Set([years.length - 2, years.length - 1].filter(i => i >= 0));
+
   groups.forEach((g, gi) => {
     const groupX = padL + gi * groupW + barGap / 2;
     svg.appendChild(textEl(padL + gi * groupW + groupW / 2, padT + chartH + 16, g.label, {
-      "text-anchor": "middle", "font-size": "10", fill: "#6b7684"
+      "text-anchor": "middle", "font-size": "8.5", fill: "#8a93a0"
     }));
     g.values.forEach((val, yi) => {
       if (val == null) return;
@@ -5376,6 +5421,13 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
         fill: FIVE_YEAR_PALETTE[yi] || "#1a73e8", rx: 1.5
       });
       svg.appendChild(rect);
+
+      if (labeledYearIdx.has(yi)) {
+        const labelY = val >= 0 ? Math.max(padT + 7, y - 3) : Math.min(padT + chartH - 2, y + 9);
+        svg.appendChild(textEl(x + barW / 2, labelY, fmtMoneyBare(val), {
+          "text-anchor": "middle", "font-size": "7.5", "font-weight": "700", fill: "#3d4a5c"
+        }));
+      }
 
       rect.addEventListener("pointerenter", () => {
         tooltip.style.display = "block";
@@ -5429,7 +5481,7 @@ document.getElementById("regenerateAnalysisBtn").addEventListener("click", gener
 document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("chartAccountSelect").addEventListener("change", render);
-document.getElementById("fiveYearLineSelect").addEventListener("change", render);
+document.getElementById("fiveYearLinePicker").addEventListener("change", render);
 document.getElementById("bizlineSelect").addEventListener("change", render);
 document.querySelectorAll('input[name="historyBasis"]').forEach(el => el.addEventListener("change", render));
 document.getElementById("recurringStatusFilter").addEventListener("change", renderRecurringPayments);
