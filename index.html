@@ -240,6 +240,10 @@
   .card .card-title { font-size: 12.5px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
   .card .card-value { font-size: 22px; font-weight: 800; margin-top: 4px; }
   .card .card-margin { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+  /* Gross Margin (%) card — visually emphasized as the "#1 metric" per the
+     user's framing, same treatment as every sibling dashboard in this family. */
+  .card.emphasis { border-left: 4px solid var(--accent); }
+  .card.emphasis .card-value { font-size: 26px; color: var(--accent); }
 
   .chip-row-caption { font-size: 10.5px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
   .chip-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -351,6 +355,43 @@
   .chip-row.compact .chip-label { font-size: 8px; }
   .chip-row.compact .chip-value { font-size: 10px; }
 
+  /* ---- Account Trends tab: two-column layout, scrollable multi-select ----
+     account list on the left, both charts stacked on the right — the
+     list's own height is pinned to match the combined height of both chart
+     cards (via JS, see syncAccountTrendListHeight()) rather than an
+     independent scroll region, so it spans down to the bottom of the 2nd
+     chart. */
+  .at-layout { display: flex; gap: 16px; align-items: flex-start; }
+  .at-list-col { flex: 0 0 280px; min-width: 220px; }
+  .at-charts-col { flex: 1 1 auto; min-width: 0; }
+  @media (max-width: 900px) { .at-layout { flex-direction: column; } .at-list-col { flex-basis: auto; width: 100%; } }
+  .at-list-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; font-weight: 700; color: var(--navy); text-transform: uppercase;
+    letter-spacing: 0.3px; margin-bottom: 6px;
+  }
+  .at-list {
+    border: 1px solid var(--border); border-radius: 8px; background: #fff;
+    overflow-y: auto; box-shadow: 0 1px 2px rgba(20,30,45,0.05);
+  }
+  .at-group-label {
+    position: sticky; top: 0; background: #eef2f7; color: var(--navy);
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+    padding: 5px 10px; border-bottom: 1px solid var(--border); border-top: 1px solid var(--border);
+  }
+  .at-group-label:first-child { border-top: none; }
+  .at-item {
+    display: flex; align-items: center; gap: 7px; padding: 4px 10px 4px 16px;
+    font-size: 12px; cursor: pointer; border-bottom: 1px solid #f2f2f2;
+  }
+  .at-item:hover { background: #eaf1fb; }
+  .at-item input { flex: none; accent-color: var(--accent); cursor: pointer; }
+  .at-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .at-item.checked { background: #eaf1fb; font-weight: 600; }
+  .at-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 4px; }
+  .at-legend span { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+  .at-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex: none; }
+
   /* ---- 5-Year Trends tab: left-side line picker + narrower charts ---- */
   .fiveyear-layout { display: flex; align-items: flex-start; gap: 16px; }
   .fiveyear-picker { flex: 0 0 168px; display: flex; flex-direction: column; gap: 2px; }
@@ -372,6 +413,42 @@
   }
   .chart-tooltip-value { font-weight: 700; font-size: 13px; }
   .chart-tooltip-label { color: #b9c6d6; font-size: 10px; margin-top: 2px; }
+
+  /* ---- Transaction drill-down (universal — P&L Statement, item 1) ---- */
+  td.drill-cell { cursor: pointer; text-decoration: underline dotted; text-decoration-color: var(--accent); }
+  td.drill-cell:hover { background: #eaf1fb; }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(15,23,35,0.55);
+    z-index: 50; align-items: center; justify-content: center; padding: 24px;
+  }
+  .modal-overlay.show { display: flex; }
+  /* ~40% larger than a typical 1100px/82vh modal, sized so a full 50-row
+     page needs no horizontal scrolling — width is the bigger lever, since
+     wrapping long Memo/Account text onto 2 lines (instead of forcing
+     nowrap + horizontal scroll) is what actually saves vertical space. */
+  .modal-content {
+    background: #fff; border-radius: 10px; max-width: 1540px; width: 95vw;
+    max-height: 92vh; overflow: auto; padding: 22px 26px; position: relative;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal-close {
+    position: absolute; top: 14px; right: 16px; border: none; background: none;
+    font-size: 16px; cursor: pointer; color: var(--muted); line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-title { font-size: 15px; font-weight: 700; color: var(--navy); margin: 0 0 4px; }
+  .modal-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+  /* Overrides the app-wide `th, td { white-space: nowrap }` — inside the
+     drill modal, long Memo/Name/Account text should wrap (freeing the modal
+     from needing horizontal scroll) and every field should top-align rather
+     than center-align once a cell wraps to 2+ lines. */
+  #drillModalTable { table-layout: fixed; width: 100%; }
+  #drillModalTable th, #drillModalTable td { white-space: normal; word-break: break-word; vertical-align: top; }
+  /* The generic .table-wrap max-height formula is designed for tables
+     sitting below the sticky header — inside this modal it isn't below
+     anything, so let the OUTER .modal-content be the only scroll container. */
+  .modal-content .table-wrap { max-height: none; overflow: visible; box-shadow: none; border: none; }
+  #drillModalTable th:last-child, #drillModalTable td:last-child { white-space: nowrap; } /* Amount column never needs to wrap */
 </style>
 </head>
 <body>
@@ -480,32 +557,39 @@
   <div id="panel-charts" class="tab-panel" hidden>
     <section>
       <h2 class="section-title">Account Trends</h2>
-      <div class="section-sub">Trailing 25 months ending on the Month in Review selected above, for the entity selected above.</div>
-      <div class="inline-control">
-        <label for="chartAccountSelect">Account</label>
-        <select id="chartAccountSelect"></select>
-      </div>
-      <div id="chartsEmpty" class="empty-note" style="display:none;">No accounts available for this entity.</div>
-      <div id="chartsContent">
-        <div class="section-sub" id="chartsHeading" style="font-weight:600; color:var(--navy);"></div>
-        <div class="chart-card">
-          <div class="chart-card-head">
-            <div class="chart-card-title">Actual $ by Month</div>
-            <div class="chip-row compact" id="chartDollarAvgRow"></div>
+      <div class="section-sub">Trailing 25 months ending on the Month in Review selected above, for the entity selected above. Check one or more accounts to compare their trends on the same charts.</div>
+      <div class="at-layout">
+        <div class="at-list-col">
+          <div class="at-list-head">
+            <span>Accounts</span>
+            <button type="button" class="btn-secondary" id="atClearAllBtn">Clear All</button>
           </div>
-          <div class="chart-svg-wrap">
-            <svg id="chartDollar"></svg>
-            <div class="chart-tooltip" id="chartDollarTooltip"></div>
-          </div>
+          <div id="accountTrendList" class="at-list"></div>
         </div>
-        <div class="chart-card">
-          <div class="chart-card-head">
-            <div class="chart-card-title">% of Revenue by Month</div>
-            <div class="chip-row compact" id="chartPctAvgRow"></div>
-          </div>
-          <div class="chart-svg-wrap">
-            <svg id="chartPct"></svg>
-            <div class="chart-tooltip" id="chartPctTooltip"></div>
+        <div class="at-charts-col">
+          <div id="chartsEmpty" class="empty-note" style="display:none;">Check one or more accounts on the left to see their trend.</div>
+          <div id="chartsContent">
+            <div class="section-sub" id="chartsHeading" style="font-weight:600; color:var(--navy);"></div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <div class="chart-card-title">Actual $ by Month</div>
+              </div>
+              <div id="chartDollarLegend" class="at-legend"></div>
+              <div class="chart-svg-wrap">
+                <svg id="chartDollar"></svg>
+                <div class="chart-tooltip" id="chartDollarTooltip"></div>
+              </div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-head">
+                <div class="chart-card-title">% of Revenue by Month</div>
+              </div>
+              <div id="chartPctLegend" class="at-legend"></div>
+              <div class="chart-svg-wrap">
+                <svg id="chartPct"></svg>
+                <div class="chart-tooltip" id="chartPctTooltip"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -709,6 +793,19 @@
     </section>
   </div>
 </main>
+
+<div class="modal-overlay" id="drillModal">
+  <div class="modal-content">
+    <button type="button" class="modal-close" id="drillModalClose">✕</button>
+    <div class="modal-title" id="drillModalTitle"></div>
+    <div class="modal-sub" id="drillModalSub"></div>
+    <div class="modal-sub" style="font-style:italic;">Reflects the raw GL Detail export. For some personal-side accounts this doesn't reconcile exactly to the P&amp;L Detail (Mapped) figure shown above — a real, discovered gap between the two sources, not a display error. See CLAUDE.md, "Universal transaction drill-down" section.</div>
+    <div class="table-wrap"><table id="drillModalTable"></table></div>
+    <div style="text-align:center; margin-top:10px;">
+      <button type="button" class="btn-secondary" id="drillLoadMoreBtn" style="display:none;"></button>
+    </div>
+  </div>
+</div>
 
 <footer id="footerNote"></footer>
 
@@ -1025,7 +1122,19 @@ function collapseGLSplitLines(rows) {
   return out;
 }
 
-function parseGLRows(text) {
+// opts.allTransactions (used by the universal transaction drill-down, item 1
+// of the cross-dashboard batch) disables both restrictions that only make
+// sense for Recurring Payments' cash-out-detection use case: the
+// GL_CASH_OUT_TYPES filter (which would silently hide every Invoice/Payment/
+// Deposit posting — exactly the transactions behind a Revenue drill-down)
+// and the GL_LOOKBACK_MONTHS cutoff (a drill-down needs to reach as far back
+// as the P&L itself does, not just the last 24 months). Amount stays signed
+// (not Math.abs'd) in that mode too, so a modal's running total reconciles
+// exactly against the actual (possibly negative, e.g. a contra/refund)
+// dollar figure that was clicked — Recurring Payments only ever wants a
+// positive "amount charged" and is unaffected since it never passes this flag.
+function parseGLRows(text, opts) {
+  opts = opts || {};
   const rows = parseCSV(text);
   const headerIdx = findGLHeaderRowIndex(rows);
   if (headerIdx === -1) throw new Error('No header row found (looked for a "Date" column in the first 20 rows) — make sure the published range includes the header row');
@@ -1046,12 +1155,21 @@ function parseGLRows(text) {
     const r = rows[i];
     if (!r.length) continue;
     const type = (r[typeCol] || "").trim();
-    if (!GL_CASH_OUT_TYPES.has(type.toLowerCase())) continue;
+    if (!opts.allTransactions && !GL_CASH_OUT_TYPES.has(type.toLowerCase())) continue;
     const date = parseGLDate(r[dateCol]);
-    if (!date || date < cutoff) continue;
+    if (!date || (!opts.allTransactions && date < cutoff)) continue;
     const name = (r[nameCol] || "").trim();
     const company = (r[companyCol] || "").trim();
-    if (!name || !company) continue;
+    // Recurring Payments needs a real payee name to detect a vendor's
+    // cadence, so the normal (non-drill) parse requires one. The universal
+    // drill-down doesn't — a real, dollar-bearing GL line (Journal Entry,
+    // Transfer, a Ramp/credit-card-feed import, etc.) commonly has a blank
+    // Name but is still a genuine transaction behind an account's total;
+    // dropping it here would silently understate the drill-down's reconciled
+    // total. Found via a real reconciliation check: ~35% of one account's
+    // raw GL rows had a blank Name and were being lost under the old
+    // unconditional `!name` guard.
+    if (!company || (!opts.allTransactions && !name)) continue;
     parsed.push({
       date, type, num: (r[numCol] || "").trim(), name, company,
       split: (r[splitCol] || "").trim(),
@@ -1062,9 +1180,9 @@ function parseGLRows(text) {
   }
 
   return collapseGLSplitLines(parsed).map(r => ({
-    date: r.date, company: r.company, payee: r.name,
+    date: r.date, company: r.company, payee: r.name, type: r.type, num: r.num,
     account: r.split === "-Split-" ? "Multiple Categories" : (r.split || r.account),
-    amount: Math.abs(r.amount), memo: r.memo
+    amount: opts.allTransactions ? r.amount : Math.abs(r.amount), memo: r.memo
   }));
 }
 
@@ -1127,6 +1245,7 @@ async function loadData() {
       if (flag) flagByCompany.set(company, flag);
     }
     allCompanies = [...companySet].sort();
+    PL_ACCOUNT_SECTION = new Map(records.map(r => [r.standardAccount, r.section]));
 
     // BS Detail (Mapped): Top Level, Category, Raw Account, Company, Standard Account, months…, Consolidated Flag
     const bs = parseMappedRows(bsText, 5);
@@ -1180,14 +1299,14 @@ async function loadData() {
 // Each entity's raw GL export is fetched and parsed independently — one bad
 // export (e.g. a missing header row) shouldn't take down the other entity's
 // data, so failures are collected rather than thrown.
-async function fetchOneGLSource(url, label) {
+async function fetchOneGLSource(url, label, opts) {
   if (!url) return [];
   try {
     const text = await fetch(url + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.text();
     });
-    return parseGLRows(text);
+    return parseGLRows(text, opts);
   } catch (err) {
     glLoadErrors.push({ label, message: err.message });
     return [];
@@ -1202,6 +1321,52 @@ async function fetchGLData() {
   ]);
   glRecords = [...personal, ...business];
 }
+
+// ---- Universal transaction drill-down (cross-dashboard batch item 1) --
+// A second, separate fetch/parse of the SAME two GL CSVs used above for
+// Recurring Payments, but with opts.allTransactions — every transaction
+// type, full history, signed amounts (see parseGLRows) — so a clicked
+// Revenue/Cost of Sales/Expenses dollar figure on the P&L Statement can be
+// traced to its real GL lines. Kept as a separate cache (glDrillRecords,
+// not glRecords) rather than widening glRecords itself, since Recurring
+// Payments' own detection logic depends on the narrower cash-out-only,
+// 24-month-lookback, absolute-value shape and shouldn't be disturbed.
+// Fetched lazily (only on the first actual drill-down click), not on page
+// load, same reasoning as the GL fetch for Recurring Payments already uses.
+let glDrillRecords = null;
+let glDrillFetchPromise = null;
+let glDrillError = null;
+
+async function fetchGLDrillData() {
+  glDrillError = null;
+  try {
+    const [personal, business] = await Promise.all([
+      fetchOneGLSource(GL_CSV_URL_PERSONAL, "Personal (drill-down)", { allTransactions: true }),
+      fetchOneGLSource(GL_CSV_URL_BUSINESS, "Business (drill-down)", { allTransactions: true })
+    ]);
+    glDrillRecords = [...personal, ...business];
+  } catch (err) {
+    glDrillError = err.message || String(err);
+  }
+}
+
+// Waits out a fetch already in flight (e.g. from a second drill-down click
+// before the first finished) rather than assuming "not yet loaded" always
+// means "not yet started."
+function waitForGLDrillData() {
+  if (glDrillRecords) return Promise.resolve();
+  if (!glDrillFetchPromise) glDrillFetchPromise = fetchGLDrillData();
+  return glDrillFetchPromise.then(() => {
+    if (!glDrillRecords) throw new Error(glDrillError || "GL data unavailable");
+  });
+}
+
+// account name -> P&L section ("Income"/"Cost of Goods Sold"/"Expenses"/
+// "Other Income"/"Other Expenses"), rebuilt on every loadData() from the
+// live PL tab's own records — used to match a whole-section drill-down
+// (Revenue/Cost of Sales/Expenses) against GL rows by account name, without
+// a second hardcoded account list that could drift out of sync.
+let PL_ACCOUNT_SECTION = new Map();
 
 function buildEntityGroups(flagByCompany) {
   entityGroups = { consolidated: [], excludedClassified: [], unclassified: [] };
@@ -1259,6 +1424,27 @@ function populateEntityDropdown() {
   }
 }
 
+// Default to the last CLOSED calendar month (relative to today's real
+// date), not just "the most recent column with any data" — a partially-
+// populated current month otherwise looks "active" and got selected by
+// default, when in practice this is almost always reviewing the last full
+// closed period. Falls back to the old most-recent-with-data behavior only
+// if the previous calendar month genuinely isn't in the sheet yet (e.g. the
+// bookkeeper is behind) — never selects a month that doesn't exist in the
+// dropdown.
+function defaultMonthIndex() {
+  const now = new Date();
+  const prevMonthNum = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+  const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const exact = months.findIndex(m => m.year === prevYear && m.monthNum === prevMonthNum);
+  if (exact !== -1) return exact;
+  let lastActive = months.length - 1;
+  for (let i = months.length - 1; i >= 0; i--) {
+    if (records.some(r => r.values[i] !== 0)) { lastActive = i; break; }
+  }
+  return lastActive;
+}
+
 function populateMonthDropdown() {
   const sel = document.getElementById("monthSelect");
   const prevValue = sel.value;
@@ -1268,13 +1454,7 @@ function populateMonthDropdown() {
   if (prevValue && [...sel.options].some(o => o.value === prevValue)) {
     sel.value = prevValue;
   } else {
-    // Default to the most recent month with any nonzero activity anywhere.
-    let lastActive = months.length - 1;
-    for (let i = months.length - 1; i >= 0; i--) {
-      const hasData = records.some(r => r.values[i] !== 0);
-      if (hasData) { lastActive = i; break; }
-    }
-    sel.value = String(lastActive);
+    sel.value = String(defaultMonthIndex());
   }
   currentMonthIdx = parseInt(sel.value, 10);
 }
@@ -3060,6 +3240,38 @@ function ttmPairRatio(num, den, idx) {
 function periodPairsFor(series, idx) { return [monthPair(series, idx), ytdPair(series, idx), ttmPair(series, idx)]; }
 function periodPairsForRatio(num, den, idx) { return [monthPairRatio(num, den, idx), ytdPairRatio(num, den, idx), ttmPairRatio(num, den, idx)]; }
 
+// ---- Universal transaction drill-down support (item 1) ----------------
+// Mirrors periodPairsFor()'s 3 groups (This Month, YTD, Trailing 12 Mo) but
+// returns MONTH-INDEX ranges instead of summed dollar values, so a clicked
+// actual-$ cell can be traced back to the exact set of months (and then
+// real GL transactions) that produced it. Kept separate from periodPairsFor
+// itself to avoid touching that function's return shape at every existing
+// call site.
+function periodIndexRangesFor(idx) {
+  const y = months[idx].year, m = months[idx].monthNum;
+  return [
+    { current: [idx, idx], prior: (idx - 12 >= 0) ? [idx - 12, idx - 12] : null },
+    { current: ytdRange(y, m), prior: ytdRange(y - 1, m) },
+    { current: ttmRange(idx), prior: priorTtmRange(idx) }
+  ];
+}
+// Converts a [startIdx, endIdx] pair of month-array indices into real
+// [start, end) Date objects for filtering GL drill-down rows.
+function dateRangeForMonthIndices(indexRange) {
+  if (!indexRange) return null;
+  const [startIdx, endIdx] = indexRange;
+  const start = new Date(months[startIdx].year, months[startIdx].monthNum, 1);
+  const end = new Date(months[endIdx].year, months[endIdx].monthNum + 1, 1);
+  return [start, end];
+}
+function periodLabelFor(groupIdx, isPrior) {
+  const m = months[currentMonthIdx];
+  const priorYearLabel = MONTH_NAMES[m.monthNum] + " " + (m.year - 1);
+  if (groupIdx === 0) return isPrior ? priorYearLabel : m.label;
+  if (groupIdx === 1) return isPrior ? `YTD through ${priorYearLabel}` : `YTD through ${m.label}`;
+  return isPrior ? `Trailing 12 Mo through ${priorYearLabel}` : `Trailing 12 Mo through ${m.label}`;
+}
+
 const SECTION_POLARITY = {
   "Income": "pos", "Cost of Goods Sold": "neg", "Expenses": "neg",
   "Other Income": "pos", "Other Expenses": "neg"
@@ -3099,7 +3311,7 @@ function render() {
   const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const monthVal = document.getElementById("monthSelect").value;
-  currentMonthIdx = monthVal !== "" ? parseInt(monthVal, 10) : months.length - 1;
+  currentMonthIdx = monthVal !== "" ? parseInt(monthVal, 10) : defaultMonthIndex();
 
   const n = monthLabels.length;
   if (!n) {
@@ -3145,7 +3357,12 @@ function render() {
   renderStatement(summaryLines, sectionData, companies, entVal);
   renderCards(summaryLines);
   renderAnalysis(entVal, companies);
-  renderCharts(companies, summaryLines);
+  // Computed here (not just before renderTypicalMonth) so Account Trends can
+  // list the user's own Budget-tab Categories (Auto/Cove/Jasmine/Ledges/
+  // Health) alongside real accounts, reading the exact same tree the Budget
+  // tab itself renders rather than recomputing category membership a second way.
+  const chartsBudgetTree = buildBudgetTree(summaryLines, sectionData, buildSocfCashFlowModel(companies));
+  renderCharts(companies, summaryLines, chartsBudgetTree);
   renderFiveYearTrends(companies, summaryLines);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
@@ -3227,8 +3444,17 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
   // Budget tab's layout).
   const expenseGroups = buildExpenseGroupsForDisplay(sectionData);
 
-  function addSummaryRow(label, series, polarity, expandKey, rowKey) {
-    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+  // drillSection (only ever passed for Revenue->Income, Cost of Sales->Cost
+  // of Goods Sold, Expenses->Expenses — single-section summary lines that
+  // are cleanly filterable via one GL query) wires up the This-Month/Prior/
+  // YTD/TTM actual-$ cells for the universal transaction drill-down (item 1
+  // of the cross-dashboard batch). Gross Profit, Operating Income, Non-
+  // Operating Items, and Net Income never pass one — they're computed by
+  // adding/subtracting other already-displayed lines, not a single
+  // filterable GL query, matching the same scope decision made on Titan.
+  function addSummaryRow(label, series, polarity, expandKey, rowKey, drillSection) {
+    const drillMeta = drillSection ? { kind: "section", section: drillSection, companies } : null;
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false, drillMeta);
     const tr = buildRow("summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), cells, expandKey);
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
@@ -3242,8 +3468,13 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
-  function addDetailRow(label, series, polarity, rowKey) {
-    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+  // account (only passed for a genuine single P&L leaf account — never for
+  // a synthesized/merged label or a debt-principal row, which have no
+  // single matching GL account to filter to) wires up this row's actual-$
+  // cells for the drill-down, same scope rule as addSummaryRow above.
+  function addDetailRow(label, series, polarity, rowKey, account) {
+    const drillMeta = account ? { kind: "account", account, companies } : null;
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false, drillMeta);
     const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), cells);
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
@@ -3282,7 +3513,8 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
   }
 
   summaryLines.forEach(line => {
-    addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null, line.key);
+    const singleSection = (line.expand && line.expand.length === 1) ? line.expand[0] : null;
+    addSummaryRow(line.label, line.series, line.polarity, line.expand ? line.key : null, line.key, singleSection);
     addPctRow(line.pctOfRevenue, line.polarity, line.key);
     if (!(line.expand && expandedKeys.has(line.key))) return;
 
@@ -3303,7 +3535,12 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
           groups.fixedParent.subgroups.forEach(g => {
             const gKey = "stmt_expcat_" + (g.id || "general");
             addGroupRow(g.label, g.series, gKey, "summary-line nested");
-            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
+            // Note: r.account is a real leaf account name UNLESS it was
+            // combined via Merge As into a shared display label — a merged
+            // row's label won't match any single real GL account, so its
+            // drill-down will correctly (if unhelpfully) show "no matching
+            // transactions" rather than a wrong/partial result.
+            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account));
           });
         }
       }
@@ -3313,7 +3550,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
         if (!g.rows.length) return;
         const gKey = "stmt_exp_" + g.label.replace(/[^a-z0-9]+/gi, "_");
         addGroupRow(g.label, g.series, gKey, "summary-line");
-        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account));
+        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account));
       });
       return;
     }
@@ -3326,7 +3563,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
         addSubHeader(sectionDisplayLabel(sectionKey), line.key);
       }
       const pol = SECTION_POLARITY[sectionKey] || "pos";
-      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol, sectionKey + "::" + r.account));
+      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol, sectionKey + "::" + r.account, r.account));
     });
   });
 
@@ -3383,7 +3620,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
     addPlainDivider("Seasonal Expenses — Included in Net Income Above");
     const seasonalKey = "stmt_expseasonal";
     addGroupRow(expenseGroups.seasonalGroup.label, expenseGroups.seasonalGroup.series, seasonalKey, "summary-line");
-    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", seasonalKey + "::" + r.account));
+    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", seasonalKey + "::" + r.account, r.account));
   }
 
   table.appendChild(tbody);
@@ -3404,9 +3641,17 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
 }
 
 // Builds the 12 data cells (4 per period group) for one row, from 3 {current,prior} pairs.
-function buildPeriodCells(pairs, polarity, isPct) {
+// `drillMeta` ({kind:"account", account, companies} or {kind:"section",
+// section, companies}) is only ever passed for real, filterable actual-$
+// lines (leaf accounts and single-section totals) — never for isPct rows or
+// derived/spread lines (Gross Profit, Operating Income, Non-Operating, Net
+// Income), matching the "only actuals for the period listed, not averages,
+// differences, or budgets" scope. Only the current/prior $ cells (not the
+// Δ$/Δ% cells) ever get a drill target.
+function buildPeriodCells(pairs, polarity, isPct, drillMeta) {
   const cells = [];
-  pairs.forEach(({ current, prior }) => {
+  const ranges = drillMeta ? periodIndexRangesFor(currentMonthIdx) : null;
+  pairs.forEach(({ current, prior }, i) => {
     const arrow = arrowFor(current, prior, polarity, isPct ? 0.0005 : 0.5);
     const deltaDollar = (current != null && prior != null) ? current - prior : null;
     const deltaPct = pctChange(current, prior);
@@ -3416,8 +3661,16 @@ function buildPeriodCells(pairs, polarity, isPct) {
       cells.push({ text: deltaDollar != null ? fmtPct(deltaDollar) : "—", cls: "delta " + arrow.cls });
       cells.push({ text: "—", cls: "delta narrow" });
     } else {
-      cells.push({ text: fmtMoney(current), grpStart: true });
-      cells.push({ text: fmtMoney(prior) });
+      const curCell = { text: fmtMoney(current), grpStart: true };
+      const priCell = { text: fmtMoney(prior) };
+      if (drillMeta && current != null && ranges[i].current) {
+        curCell.drill = { ...drillMeta, range: ranges[i].current, label: periodLabelFor(i, false) };
+      }
+      if (drillMeta && prior != null && ranges[i].prior) {
+        priCell.drill = { ...drillMeta, range: ranges[i].prior, label: periodLabelFor(i, true) };
+      }
+      cells.push(curCell);
+      cells.push(priCell);
       cells.push({ text: deltaDollar != null ? fmtMoney(deltaDollar) : "—", cls: "delta " + arrow.cls });
       cells.push({ text: deltaPct != null ? fmtPct(deltaPct) : "—", cls: "delta narrow " + arrow.cls });
     }
@@ -3479,10 +3732,138 @@ function buildRow(rowClass, labelHtml, cells, expandKey) {
     if (c.cls) c.cls.split(" ").forEach(cl => cl && td.classList.add(cl));
     if (c.grpStart) td.classList.add("grp-start");
     if (typeof c.text === "string" && c.text.startsWith("(")) td.classList.add("neg");
+    if (c.drill) {
+      td.classList.add("drill-cell");
+      td.title = "Click to see the transactions behind this figure";
+      // stopPropagation: a row with an expandKey also carries the row-level
+      // "expand-toggle" click handler above — without stopping propagation,
+      // clicking a drillable dollar figure would also collapse/expand the row.
+      td.addEventListener("click", (e) => { e.stopPropagation(); openStatementDrillDown(c.drill); });
+    }
     tr.appendChild(td);
   });
   return tr;
 }
+
+// ---- Universal transaction drill-down (item 1) -------------------------
+// Filters the lazily-fetched, unfiltered glDrillRecords (see
+// fetchGLDrillData above) down to the exact company/account/date-range
+// combination behind a clicked cell. Scoped to whichever `companies` array
+// was active for the P&L Statement at render time (Consolidated or one
+// specific entity) — a company from the "wrong" entity never leaks into a
+// modal's total.
+function openStatementDrillDown(drill) {
+  showDrillModal("Loading transaction detail…", "Fetching GL Detail (one-time per session)…", []);
+  document.getElementById("drillLoadMoreBtn").style.display = "none";
+  waitForGLDrillData().then(() => {
+    const [rangeStart, rangeEnd] = dateRangeForMonthIndices(drill.range);
+    const txns = glDrillRecords
+      .filter(row => drill.companies.includes(row.company))
+      .filter(row => row.date >= rangeStart && row.date < rangeEnd)
+      .filter(row => drill.kind === "account" ? row.account === drill.account : PL_ACCOUNT_SECTION.get(row.account) === drill.section)
+      .slice()
+      .sort((a, b) => a.date - b.date);
+    const title = drill.kind === "account" ? drill.account : sectionDisplayLabel(drill.section);
+    showDrillModal(title, drill.label, txns);
+  }).catch(err => {
+    document.getElementById("drillModalSub").textContent = "Couldn't load transaction detail: " + ((err && err.message) || err);
+  });
+}
+
+// ---- Shared drill-down modal. Paginates at 50 rows/page ("Load Next 50")
+// since some periods/accounts have hundreds of real transactions; the
+// header total/count always reflect the FULL matching set regardless of how
+// many rows are currently rendered, so the modal's total keeps reconciling
+// against the figure that was clicked even before every page has loaded. ----
+let drillAllTxns = [];
+let drillShownCount = 0;
+const DRILL_PAGE_SIZE = 50;
+
+function showDrillModal(title, sub, txns) {
+  drillAllTxns = txns;
+  drillShownCount = 0;
+  const total = txns.reduce((s, t) => s + t.amount, 0);
+  document.getElementById("drillModalTitle").textContent = title;
+  document.getElementById("drillModalSub").textContent =
+    `${sub} · ${txns.length} transaction${txns.length === 1 ? "" : "s"} · Total ${fmtMoney(total)}`;
+
+  const table = document.getElementById("drillModalTable");
+  table.innerHTML = "";
+  // Explicit column widths (table-layout:fixed in CSS respects these
+  // exactly) — without this, the browser's auto layout gives the Memo
+  // column most of the width and squeezes Name/Account down to a couple
+  // characters, forcing long strings to wrap across many lines per row.
+  const colgroup = document.createElement("colgroup");
+  [9, 8, 8, 19, 19, 29, 8].forEach(pct => {
+    const col = document.createElement("col");
+    col.style.width = pct + "%";
+    colgroup.appendChild(col);
+  });
+  table.appendChild(colgroup);
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Date", "Type", "Num", "Name", "Account", "Memo", "Amount"].forEach(h => headRow.appendChild(th(h)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  table.appendChild(document.createElement("tbody"));
+
+  renderDrillPage();
+  document.getElementById("drillModal").classList.add("show");
+}
+
+function renderDrillPage() {
+  const tbody = document.getElementById("drillModalTable").querySelector("tbody");
+  if (!drillShownCount) tbody.innerHTML = ""; // fresh open — clear any "no transactions" note from a prior modal
+  const nextSlice = drillAllTxns.slice(drillShownCount, drillShownCount + DRILL_PAGE_SIZE);
+  const MEMO_TRUNCATE_AT = 180; // a handful of real memos hold a full multi-
+                                 // paragraph note — full text is still there
+                                 // on hover, just not blowing up one row's height
+  nextSlice.forEach(t => {
+    const tr = document.createElement("tr");
+    [t.date.toLocaleDateString("en-US"), t.type, t.num, t.payee, t.account, t.memo].forEach((v, i) => {
+      const td = document.createElement("td");
+      const text = v || "";
+      if (i === 5 && text.length > MEMO_TRUNCATE_AT) {
+        td.textContent = text.slice(0, MEMO_TRUNCATE_AT) + "…";
+        td.title = text;
+      } else {
+        td.textContent = text;
+      }
+      tr.appendChild(td);
+    });
+    const amtTd = document.createElement("td");
+    amtTd.textContent = fmtMoney(t.amount);
+    if (t.amount < 0) amtTd.classList.add("neg");
+    tr.appendChild(amtTd);
+    tbody.appendChild(tr);
+  });
+  drillShownCount += nextSlice.length;
+  if (!drillAllTxns.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7;
+    td.className = "empty-note";
+    td.textContent = "No matching transactions found.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  const moreBtn = document.getElementById("drillLoadMoreBtn");
+  const remaining = drillAllTxns.length - drillShownCount;
+  if (remaining > 0) {
+    moreBtn.style.display = "";
+    moreBtn.textContent = `Load Next ${Math.min(DRILL_PAGE_SIZE, remaining)} (${remaining} more)`;
+  } else {
+    moreBtn.style.display = "none";
+  }
+}
+document.getElementById("drillLoadMoreBtn").addEventListener("click", renderDrillPage);
+document.getElementById("drillModalClose").addEventListener("click", () => {
+  document.getElementById("drillModal").classList.remove("show");
+});
+document.getElementById("drillModal").addEventListener("click", (e) => {
+  if (e.target.id === "drillModal") document.getElementById("drillModal").classList.remove("show");
+});
 
 // ---- Balance Sheet tab: point-in-time balances — Current, Prior Month,
 // Prior Year, plus trailing average balances over 5 windows. No favorable/
@@ -4335,7 +4716,11 @@ function historyPeriods(basis, endIdx) {
       periods.push({ label: String(y) + (y === endYear ? " (YTD)" : ""), range: (startIdx >= 0 && lastIdx >= 0) ? [startIdx, lastIdx] : null });
     }
   } else {
-    for (let i = 11; i >= 0; i--) {
+    // 13 months, not 12 — with "last closed month" as the default anchor
+    // (see defaultMonthIndex()), this puts the same calendar month a year
+    // ago as the FIRST column, so a same-month-prior-year comparison is
+    // always visible without scrolling, not just implied by a 12-month window.
+    for (let i = 12; i >= 0; i--) {
       const idx = endIdx - i;
       periods.push({ label: idx >= 0 ? months[idx].label : "—", range: idx >= 0 ? [idx, idx] : null });
     }
@@ -4694,7 +5079,88 @@ function renderCards(summaryLines) {
     card.appendChild(cmpWrap);
 
     grid.appendChild(card);
+    if (line.key === "grossProfit") grid.appendChild(buildGrossMarginCard(line));
   });
+}
+
+// ---- Gross Margin (%) card — a ratio, not a dollar line, so it needs its
+// own comparison math (percentage-POINT difference, e.g. "+4.2 pts") rather
+// than the %-change-of-a-dollar-figure every other card's cmpRow shows —
+// "42% vs 38%, +11% change" reads as a change in the underlying dollars,
+// not the 4-point margin move that actually happened.
+function marginForRange(numSeries, denSeries, start, end) {
+  const num = sumRange(numSeries, start, end);
+  const den = sumRange(denSeries, start, end);
+  return den ? num / den : null;
+}
+function pyMonthMarginCompare(numSeries, denSeries) {
+  const idx = currentMonthIdx, pyIdx = idx - 12;
+  if (pyIdx < 0) return null;
+  const cur = denSeries[idx] ? numSeries[idx] / denSeries[idx] : null;
+  const pri = denSeries[pyIdx] ? numSeries[pyIdx] / denSeries[pyIdx] : null;
+  if (cur == null || pri == null) return null;
+  return { current: cur, prior: pri };
+}
+function ytdMarginCompare(numSeries, denSeries) {
+  const idx = currentMonthIdx;
+  const y = months[idx].year, m = months[idx].monthNum;
+  const cur = ytdRange(y, m), pri = ytdRange(y - 1, m);
+  if (!cur || !pri) return null;
+  return { current: marginForRange(numSeries, denSeries, cur[0], cur[1]), prior: marginForRange(numSeries, denSeries, pri[0], pri[1]) };
+}
+function ttmMarginCompare(numSeries, denSeries) {
+  const idx = currentMonthIdx;
+  const cur = ttmRange(idx), pri = priorTtmRange(idx);
+  if (!cur || !pri) return null;
+  return { current: marginForRange(numSeries, denSeries, cur[0], cur[1]), prior: marginForRange(numSeries, denSeries, pri[0], pri[1]) };
+}
+function cmpRowPts(label, data, polarity) {
+  const row = document.createElement("div");
+  row.className = "cmp-row";
+  if (!data || data.current == null || data.prior == null) {
+    row.innerHTML = `<span class="cmp-label">${label}</span><span class="cmp-na">Not enough history</span>`;
+    return row;
+  }
+  const arrow = arrowFor(data.current, data.prior, polarity || "pos", 0.0005);
+  const deltaPts = (data.current - data.prior) * 100;
+  const sign = deltaPts > 0 ? "+" : "";
+  row.innerHTML = `<span class="cmp-label">${label}</span>` +
+    `<span class="cmp-value arrow-${arrow.cls}">${sign}${deltaPts.toFixed(1)} pts <span class="arrow-${arrow.cls}">${arrow.symbol}</span></span>`;
+  return row;
+}
+
+// Reads straight off the Gross Profit summary-line's own `pctOfRevenue`
+// (num = Gross Profit series, den = Revenue series) rather than
+// re-deriving anything, so this card can never drift from the Gross
+// Profit card's own % of Revenue figure.
+function buildGrossMarginCard(grossProfitLine) {
+  const numSeries = grossProfitLine.pctOfRevenue.num;
+  const denSeries = grossProfitLine.pctOfRevenue.den;
+  const current = grossProfitLine.pctOfRevenue.series[currentMonthIdx];
+
+  const card = document.createElement("div");
+  card.className = "card emphasis";
+  card.innerHTML =
+    `<div class="card-title">Gross Margin (%)</div>` +
+    `<div class="card-value">${current == null ? "—" : fmtPct(current)}</div>` +
+    `<div class="card-margin">Gross Profit ÷ Revenue</div>`;
+
+  const chipRow = document.createElement("div");
+  chipRow.className = "chip-row";
+  AVG_WINDOWS.forEach(w => {
+    const avg = trailingAverageRatio(numSeries, denSeries, currentMonthIdx, w.months);
+    chipRow.appendChild(chipFor(w.label, avg, current, "pos", true));
+  });
+  card.appendChild(chipRow);
+
+  const cmpWrap = document.createElement("div");
+  cmpWrap.className = "cmp-rows";
+  cmpWrap.appendChild(cmpRowPts("vs. Same Month, Prior Year", pyMonthMarginCompare(numSeries, denSeries), "pos"));
+  cmpWrap.appendChild(cmpRowPts("YTD vs. Prior-Year YTD", ytdMarginCompare(numSeries, denSeries), "pos"));
+  cmpWrap.appendChild(cmpRowPts("Trailing 12 Mo vs. Prior 12 Mo", ttmMarginCompare(numSeries, denSeries), "pos"));
+  card.appendChild(cmpWrap);
+
+  return card;
 }
 
 function chipFor(label, avgValue, currentValue, polarity, isMargin) {
@@ -5050,11 +5516,15 @@ function renderAnalysis(entVal, companies) {
 }
 
 // ---- Account Trends tab ----
-
-// Dropdown option values are "section::account" for a detail account, or
-// "__SUMMARY__::<summaryLineKey>" for one of the P&L Statement's own
-// Revenue/COS/Gross Profit/etc. totals.
-const SUMMARY_VALUE_PREFIX = "__SUMMARY__::";
+// Rewritten from a single-account dropdown to a multi-select scrolling
+// checklist (item 5 of the cross-dashboard batch): a scrollable list of
+// checkboxes (not a <select>), a Clear All button, sized to span the full
+// height of both chart cards combined. Checking multiple accounts overlays
+// them as separate colored lines on both charts with a shared legend and
+// combined tooltip. The old single-account trailing-average chip UI
+// (renderChartAvgChips/chartDollarAvgRow/chartPctAvgRow) is gone — there's
+// no longer one "current account" for a chip row to describe once multiple
+// lines can be shown at once; the legend + tooltip serve that role instead.
 
 function buildAccountSeries(sectionKey, account, companies) {
   const n = monthLabels.length;
@@ -5067,17 +5537,27 @@ function buildAccountSeries(sectionKey, account, companies) {
   return values;
 }
 
-function populateAccountDropdown(companies, summaryLines) {
-  const sel = document.getElementById("chartAccountSelect");
-  const prevValue = sel.value;
-  sel.innerHTML = "";
+// Multi-select state — persists across re-renders like expandedKeys does.
+// IDs are namespaced by kind so summary/P&L-account/budget-category/BS-
+// category items can never collide with each other.
+let chartSelectedIds = new Set();
+const CHART_COLORS = ["#1a73e8", "#d6293a", "#1e8e3e", "#b8860b", "#8a4fbd", "#e07a3e", "#2e8b8b", "#a83e6c", "#5c6bc0", "#7a8450"];
 
-  const summaryGroup = document.createElement("optgroup");
-  summaryGroup.label = "P&L Summary";
+// Builds the ordered, grouped list of everything selectable: P&L Summary
+// first, then each P&L section in the same order as the P&L Statement
+// itself (SECTION_KEYS), then Balance Sheet categories in BS order — all
+// scoped to whichever entity/book (companies) is currently selected.
+// Budget-tab Categories (Auto/Cove/Jasmine/Ledges/Health — the only ones
+// with any accounts tagged) are surfaced at the TOP of the Expenses group,
+// ahead of the individual leaf accounts, per the explicit ask to see the
+// larger categories before the detailed accounts. BS items are category-
+// level totals (the same authoritative series the Balance Sheet tab itself
+// shows), not per-account GL detail.
+function buildAccountTrendItems(companies, summaryLines, budgetTree) {
+  const items = [];
   summaryLines.forEach(line => {
-    summaryGroup.appendChild(new Option(line.label, SUMMARY_VALUE_PREFIX + line.key));
+    items.push({ group: "P&L Summary", id: "summary::" + line.key, label: line.label, series: line.series });
   });
-  sel.appendChild(summaryGroup);
 
   const bySection = new Map();
   for (const rec of records) {
@@ -5085,81 +5565,135 @@ function populateAccountDropdown(companies, summaryLines) {
     if (!bySection.has(rec.section)) bySection.set(rec.section, new Set());
     bySection.get(rec.section).add(rec.standardAccount);
   }
+
+  // Budget Category groups (Auto/Cove/Jasmine/Ledges/Health) that actually
+  // have accounts tagged to them, in the same tree buildBudgetTree already
+  // computed for the Budget/Compare/History tabs — never recomputed here.
+  const expensesNode = (budgetTree || []).find(n => n.key === "typ_expenses");
+  const fixedParentNode = expensesNode ? expensesNode.children.find(n => n.key === "typ_expfixed") : null;
+  const categoryNodes = fixedParentNode
+    ? fixedParentNode.children.filter(n => n.key.startsWith("typ_expcat_") && n.key !== "typ_expfixed_general")
+    : [];
+
   SECTION_KEYS.forEach(sectionKey => {
     const accounts = bySection.get(sectionKey);
-    if (!accounts || !accounts.size) return;
-    const group = document.createElement("optgroup");
-    group.label = sectionDisplayLabel(sectionKey);
-    [...accounts].sort((a, b) => a.localeCompare(b)).forEach(acct => {
-      group.appendChild(new Option(acct, sectionKey + "::" + acct));
+    const catNodes = sectionKey === "Expenses" ? categoryNodes : [];
+    if ((!accounts || !accounts.size) && !catNodes.length) return;
+    const groupLabel = sectionDisplayLabel(sectionKey);
+    catNodes.forEach(node => {
+      items.push({ group: groupLabel, id: "budgetcat::" + node.key, label: node.label + " (Budget Category)", series: node.series });
     });
-    sel.appendChild(group);
+    if (accounts) {
+      [...accounts].sort((a, b) => a.localeCompare(b)).forEach(acct => {
+        items.push({ group: groupLabel, id: "pl::" + sectionKey + "::" + acct, label: acct, series: buildAccountSeries(sectionKey, acct, companies) });
+      });
+    }
   });
-  if (prevValue && [...sel.options].some(o => o.value === prevValue)) sel.value = prevValue;
-  else if (sel.options.length) sel.selectedIndex = 0;
+
+  const allBsCats = [...BS_CATEGORY_ORDER.assets, ...BS_CATEGORY_ORDER.liabilities, ...BS_CATEGORY_ORDER.equity];
+  allBsCats.forEach(catKey => {
+    const built = buildBsCategory(catKey, companies, currentMonthIdx);
+    if (!built.total.some(v => v !== 0)) return;
+    items.push({ group: "Balance Sheet", id: "bs::" + catKey, label: BS_CATEGORY_LABEL[catKey], series: built.total });
+  });
+
+  return items;
 }
 
-function renderCharts(companies, summaryLines) {
-  const sel = document.getElementById("chartAccountSelect");
-  populateAccountDropdown(companies, summaryLines);
-  const val = sel.value;
+function renderAccountTrendList(items) {
+  const list = document.getElementById("accountTrendList");
+  list.innerHTML = "";
+  let lastGroup = null;
+  items.forEach(item => {
+    if (item.group !== lastGroup) {
+      const gl = document.createElement("div");
+      gl.className = "at-group-label";
+      gl.textContent = item.group;
+      list.appendChild(gl);
+      lastGroup = item.group;
+    }
+    const row = document.createElement("label");
+    row.className = "at-item" + (chartSelectedIds.has(item.id) ? " checked" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = chartSelectedIds.has(item.id);
+    cb.addEventListener("change", () => {
+      if (cb.checked) chartSelectedIds.add(item.id); else chartSelectedIds.delete(item.id);
+      render();
+    });
+    const span = document.createElement("span");
+    span.textContent = item.label;
+    span.title = item.label;
+    row.appendChild(cb);
+    row.appendChild(span);
+    list.appendChild(row);
+  });
+}
+
+// Sizes the account list to match the combined height of both chart cards,
+// per the ask to have it "take up the entire height down to the bottom of
+// the 2nd chart," rather than an arbitrary fixed height.
+function syncAccountTrendListHeight() {
+  const list = document.getElementById("accountTrendList");
+  const content = document.getElementById("chartsContent");
+  if (content.style.display === "none") { list.style.height = "300px"; return; }
+  const listTop = list.getBoundingClientRect().top;
+  const contentBottom = content.getBoundingClientRect().bottom;
+  const h = contentBottom - listTop;
+  list.style.height = Math.max(300, h) + "px";
+}
+
+function renderCharts(companies, summaryLines, budgetTree) {
+  const items = buildAccountTrendItems(companies, summaryLines, budgetTree);
+  renderAccountTrendList(items);
+
+  const selected = items.filter(it => chartSelectedIds.has(it.id));
   const emptyEl = document.getElementById("chartsEmpty");
   const contentEl = document.getElementById("chartsContent");
 
-  if (!val) {
+  if (!selected.length) {
     emptyEl.style.display = "";
     contentEl.style.display = "none";
+    syncAccountTrendListHeight();
     return;
   }
   emptyEl.style.display = "none";
   contentEl.style.display = "";
 
   const revenueSeries = summaryLines.find(l => l.key === "revenue").series;
-
-  let series, polarity, headingLabel;
-  if (val.startsWith(SUMMARY_VALUE_PREFIX)) {
-    const line = summaryLines.find(l => l.key === val.slice(SUMMARY_VALUE_PREFIX.length));
-    series = line.series;
-    polarity = line.polarity;
-    headingLabel = `${line.label} — P&L Summary`;
-  } else {
-    const [sectionKey, account] = val.split("::");
-    series = buildAccountSeries(sectionKey, account, companies);
-    polarity = SECTION_POLARITY[sectionKey] || "pos";
-    headingLabel = `${account} — ${sectionDisplayLabel(sectionKey)}`;
-  }
-  const pctSeries = divSeries(series, revenueSeries);
-
   const endIdx = currentMonthIdx;
   const startIdx = Math.max(0, endIdx - 24);
   const idxRange = [];
   for (let i = startIdx; i <= endIdx; i++) idxRange.push(i);
+  const xLabels = idxRange.map(i => months[i].label);
 
-  const dollarPoints = idxRange.map(i => ({ label: months[i].label, value: series[i] }));
-  const pctPoints = idxRange.map(i => ({ label: months[i].label, value: pctSeries[i] }));
+  const dollarSeriesList = selected.map((it, i) => ({
+    label: it.label, color: CHART_COLORS[i % CHART_COLORS.length],
+    values: idxRange.map(idx => it.series[idx])
+  }));
+  const pctSeriesList = selected.map((it, i) => ({
+    label: it.label, color: CHART_COLORS[i % CHART_COLORS.length],
+    values: idxRange.map(idx => (revenueSeries[idx] ? it.series[idx] / revenueSeries[idx] : null))
+  }));
 
   document.getElementById("chartsHeading").textContent =
-    `${headingLabel} · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
-    `${dollarPoints.length}-month window ending ${months[endIdx].label}`;
+    `${selected.length} account${selected.length === 1 ? "" : "s"} selected · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
+    `${xLabels.length}-month window ending ${months[endIdx].label}`;
 
-  renderChartAvgChips("chartDollarAvgRow", series, null, endIdx, polarity, false);
-  renderChartAvgChips("chartPctAvgRow", series, revenueSeries, endIdx, polarity, true);
-
-  renderLineChart(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), dollarPoints, { isPct: false });
-  renderLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), pctPoints, { isPct: true });
+  renderAccountTrendLegend("chartDollarLegend", dollarSeriesList);
+  renderAccountTrendLegend("chartPctLegend", pctSeriesList);
+  renderMultiLineChart(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), xLabels, dollarSeriesList, false);
+  renderMultiLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), xLabels, pctSeriesList, true);
+  syncAccountTrendListHeight();
 }
 
-// Trailing 3/6/12-mo and 3-yr averages for the selected account, same
-// AVG_WINDOWS/trailingAverage helpers the summary cards use, reused here.
-function renderChartAvgChips(containerId, series, denSeries, endIdx, polarity, isPct) {
-  const row = document.getElementById(containerId);
-  row.innerHTML = "";
-  const current = isPct ? (denSeries[endIdx] ? series[endIdx] / denSeries[endIdx] : null) : series[endIdx];
-  AVG_WINDOWS.forEach(w => {
-    const avg = isPct
-      ? trailingAverageRatio(series, denSeries, endIdx, w.months)
-      : trailingAverage(series, endIdx, w.months);
-    row.appendChild(chipFor(w.label, avg, current, polarity, isPct));
+function renderAccountTrendLegend(containerId, seriesList) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = "";
+  seriesList.forEach(s => {
+    const span = document.createElement("span");
+    span.innerHTML = `<i style="background:${s.color};"></i>${escapeHtml(s.label)}`;
+    el.appendChild(span);
   });
 }
 
@@ -5190,8 +5724,11 @@ function buildNiceTicks(min, max, targetCount) {
 // of this file (no CDN). Single series, so no legend (per dataviz guidance);
 // crosshair + snapping tooltip on hover, values formatted the same way as
 // the rest of the report.
-function renderLineChart(svg, tooltip, points, opts) {
-  const isPct = !!opts.isPct;
+// Multi-series line chart for Account Trends' multi-select overlay (each
+// selected account/category as its own colored line + shared legend +
+// combined tooltip) — replaces the old single-series renderLineChart, which
+// nothing else in this app used.
+function renderMultiLineChart(svg, tooltip, xLabels, seriesList, isPct) {
   const fmt = isPct ? fmtPct : fmtMoney;
   const W = 860, H = 138;
   const padL = 68, padR = 54, padT = 16, padB = 42;
@@ -5203,7 +5740,8 @@ function renderLineChart(svg, tooltip, points, opts) {
   svg.innerHTML = "";
   tooltip.style.display = "none";
 
-  if (!points.length) return;
+  const n = xLabels.length;
+  if (!n || !seriesList.length) return;
 
   function el(tag, attrs) {
     const e = document.createElementNS(NS, tag);
@@ -5216,12 +5754,11 @@ function renderLineChart(svg, tooltip, points, opts) {
     return t;
   }
 
-  const values = points.map(p => (p.value == null ? 0 : p.value));
-  const rawMin = Math.min(0, ...values);
-  const rawMax = Math.max(0, ...values);
+  const allValues = seriesList.flatMap(s => s.values.filter(v => v != null));
+  const rawMin = Math.min(0, ...allValues);
+  const rawMax = Math.max(0, ...(allValues.length ? allValues : [0]));
   const { min: domMin, max: domMax, ticks } = buildNiceTicks(rawMin, rawMax, 4);
   const domSpan = (domMax - domMin) || 1;
-  const n = points.length;
 
   const xAt = i => padL + (n === 1 ? chartW / 2 : (chartW * i) / (n - 1));
   const yAt = v => padT + chartH - ((v - domMin) / domSpan) * chartH;
@@ -5236,35 +5773,35 @@ function renderLineChart(svg, tooltip, points, opts) {
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
   }
 
-  points.forEach((p, i) => {
+  xLabels.forEach((label, i) => {
     const x = xAt(i);
     svg.appendChild(el("line", { x1: x, x2: x, y1: padT + chartH, y2: padT + chartH + 4, stroke: "#b9c2cc", "stroke-width": 1 }));
-    svg.appendChild(textEl(x, padT + chartH + 14, p.label, {
+    svg.appendChild(textEl(x, padT + chartH + 14, label, {
       "text-anchor": "end", "font-size": "9", fill: "#6b7684",
       transform: `rotate(-60 ${x} ${padT + chartH + 14})`
     }));
   });
 
-  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${xAt(i)},${yAt(values[i])}`).join(" ");
-  svg.appendChild(el("path", { d, fill: "none", stroke: "#1a73e8", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  seriesList.forEach(s => {
+    const pts = s.values.map((v, i) => (v == null ? null : { i, v }));
+    let d = "";
+    pts.forEach(p => {
+      if (!p) return;
+      d += (d === "" ? "M" : "L") + xAt(p.i) + "," + yAt(p.v) + " ";
+    });
+    svg.appendChild(el("path", { d: d.trim(), fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
 
-  // Per-point markers + value labels (smaller font than the end-point label below).
-  points.forEach((p, i) => {
-    if (i === n - 1) return;
-    const x = xAt(i), y = yAt(values[i]);
-    svg.appendChild(el("circle", { cx: x, cy: y, r: 2.5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 1 }));
-    const labelY = Math.max(padT + 6, y - 7);
-    svg.appendChild(textEl(x, labelY, fmt(values[i]), { "text-anchor": "middle", "font-size": "6.5", fill: "#6b7684" }));
+    let lastPt = null;
+    for (let i = pts.length - 1; i >= 0; i--) { if (pts[i]) { lastPt = pts[i]; break; } }
+    if (lastPt) {
+      const x = xAt(lastPt.i), y = yAt(lastPt.v);
+      svg.appendChild(el("circle", { cx: x, cy: y, r: 4, fill: s.color, stroke: "#ffffff", "stroke-width": 1.5 }));
+      svg.appendChild(textEl(x + 8, y + 4, fmt(lastPt.v), { "font-size": "9", fill: s.color, "font-weight": "700" }));
+    }
   });
 
-  const lastX = xAt(n - 1), lastY = yAt(values[n - 1]);
-  svg.appendChild(el("circle", { cx: lastX, cy: lastY, r: 5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 2 }));
-  svg.appendChild(textEl(lastX + 8, lastY + 4, fmt(values[n - 1]), { "font-size": "11", fill: "#1c2733", "font-weight": "700" }));
-
-  const crosshair = el("line", { x1: 0, x2: 0, y1: padT, y2: padT + chartH, stroke: "#1a73e8", "stroke-width": 1, "stroke-dasharray": "3,3", visibility: "hidden" });
+  const crosshair = el("line", { x1: 0, x2: 0, y1: padT, y2: padT + chartH, stroke: "#6b7684", "stroke-width": 1, "stroke-dasharray": "3,3", visibility: "hidden" });
   svg.appendChild(crosshair);
-  const hoverDot = el("circle", { r: 5, fill: "#1a73e8", stroke: "#ffffff", "stroke-width": 2, visibility: "hidden" });
-  svg.appendChild(hoverDot);
 
   const overlay = el("rect", { x: padL, y: padT, width: chartW, height: chartH, fill: "transparent" });
   svg.appendChild(overlay);
@@ -5275,34 +5812,34 @@ function renderLineChart(svg, tooltip, points, opts) {
     const mouseX = (evt.clientX - rect.left) * scaleX;
     let idx = Math.round(((mouseX - padL) / chartW) * (n - 1));
     idx = Math.max(0, Math.min(n - 1, idx));
-    const x = xAt(idx), y = yAt(values[idx]);
+    const x = xAt(idx);
 
     crosshair.setAttribute("x1", x); crosshair.setAttribute("x2", x);
     crosshair.setAttribute("visibility", "visible");
-    hoverDot.setAttribute("cx", x); hoverDot.setAttribute("cy", y);
-    hoverDot.setAttribute("visibility", "visible");
 
     tooltip.style.display = "block";
     tooltip.innerHTML = "";
-    const valEl = document.createElement("div");
-    valEl.className = "chart-tooltip-value";
-    valEl.textContent = fmt(values[idx]);
+    seriesList.forEach(s => {
+      const v = s.values[idx];
+      const row = document.createElement("div");
+      row.className = "chart-tooltip-value";
+      row.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px;"></span>${escapeHtml(s.label)}: ${v == null ? "—" : fmt(v)}`;
+      tooltip.appendChild(row);
+    });
     const lblEl = document.createElement("div");
     lblEl.className = "chart-tooltip-label";
-    lblEl.textContent = points[idx].label;
-    tooltip.appendChild(valEl);
+    lblEl.textContent = xLabels[idx];
     tooltip.appendChild(lblEl);
 
     const px = (x / W) * rect.width;
-    const py = (y / H) * rect.height;
-    let left = px + 12, top = py - 36;
-    if (left + 120 > rect.width) left = px - 132;
+    const py = rect.height / 2;
+    let left = px + 12, top = py - (18 * seriesList.length);
+    if (left + 160 > rect.width) left = px - 172;
     tooltip.style.left = Math.max(0, left) + "px";
     tooltip.style.top = Math.max(0, top) + "px";
   });
   overlay.addEventListener("pointerleave", () => {
     crosshair.setAttribute("visibility", "hidden");
-    hoverDot.setAttribute("visibility", "hidden");
     tooltip.style.display = "none";
   });
 }
@@ -5527,7 +6064,10 @@ document.getElementById("generateAnalysisBtn").addEventListener("click", generat
 document.getElementById("regenerateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
 document.getElementById("entitySelect").addEventListener("change", render);
 document.getElementById("monthSelect").addEventListener("change", render);
-document.getElementById("chartAccountSelect").addEventListener("change", render);
+document.getElementById("atClearAllBtn").addEventListener("click", () => {
+  chartSelectedIds.clear();
+  render();
+});
 document.getElementById("fiveYearLinePicker").addEventListener("change", render);
 
 (function initFiveYearColorSchemeSelect() {
