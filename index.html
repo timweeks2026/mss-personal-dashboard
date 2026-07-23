@@ -419,7 +419,7 @@
 
 <div id="statusRow">
   <div id="status">Loading…</div>
-  <div class="color-scheme-control">
+  <div class="color-scheme-control" id="colorSchemeControl" hidden>
     <label for="fiveYearColorSchemeSelect">5-Year Trends Colors</label>
     <select id="fiveYearColorSchemeSelect"></select>
   </div>
@@ -5518,6 +5518,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-recurring").hidden = name !== "recurring";
     document.getElementById("panel-retireyear").hidden = name !== "retireyear";
     document.getElementById("panel-retire12").hidden = name !== "retire12";
+    document.getElementById("colorSchemeControl").hidden = name !== "fiveyear";
   });
 });
 
