@@ -6038,27 +6038,45 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
   });
 }
 
+// Remembers the active tab across a page reload (localStorage persists past
+// even a hard refresh, unlike in-memory JS state, which a reload always
+// wipes regardless of browser). Only the active tab is persisted — not
+// entity/month/display-format — per explicit scope decision. Ported from
+// the Titan dashboard's identical pattern.
+const ACTIVE_TAB_STORAGE_KEY = "mssActiveTab";
+
+function activateTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.getElementById("panel-statement").hidden = name !== "statement";
+  document.getElementById("panel-analysis").hidden = name !== "analysis";
+  document.getElementById("panel-charts").hidden = name !== "charts";
+  document.getElementById("panel-fiveyear").hidden = name !== "fiveyear";
+  document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
+  document.getElementById("panel-cashflow").hidden = name !== "cashflow";
+  document.getElementById("panel-typical").hidden = name !== "typical";
+  document.getElementById("panel-compare").hidden = name !== "compare";
+  document.getElementById("panel-history").hidden = name !== "history";
+  document.getElementById("panel-bizlines").hidden = name !== "bizlines";
+  document.getElementById("panel-recurring").hidden = name !== "recurring";
+  document.getElementById("panel-retireyear").hidden = name !== "retireyear";
+  document.getElementById("panel-retire12").hidden = name !== "retire12";
+  document.getElementById("colorSchemeControl").hidden = name !== "fiveyear";
+}
+
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    const name = btn.dataset.tab;
-    document.getElementById("panel-statement").hidden = name !== "statement";
-    document.getElementById("panel-analysis").hidden = name !== "analysis";
-    document.getElementById("panel-charts").hidden = name !== "charts";
-    document.getElementById("panel-fiveyear").hidden = name !== "fiveyear";
-    document.getElementById("panel-balancesheet").hidden = name !== "balancesheet";
-    document.getElementById("panel-cashflow").hidden = name !== "cashflow";
-    document.getElementById("panel-typical").hidden = name !== "typical";
-    document.getElementById("panel-compare").hidden = name !== "compare";
-    document.getElementById("panel-history").hidden = name !== "history";
-    document.getElementById("panel-bizlines").hidden = name !== "bizlines";
-    document.getElementById("panel-recurring").hidden = name !== "recurring";
-    document.getElementById("panel-retireyear").hidden = name !== "retireyear";
-    document.getElementById("panel-retire12").hidden = name !== "retire12";
-    document.getElementById("colorSchemeControl").hidden = name !== "fiveyear";
+    activateTab(btn.dataset.tab);
+    try { localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, btn.dataset.tab); } catch (e) {}
   });
 });
+
+(function restoreActiveTab() {
+  let savedTab = null;
+  try { savedTab = localStorage.getItem(ACTIVE_TAB_STORAGE_KEY); } catch (e) {}
+  if (savedTab && document.querySelector(`.tab-btn[data-tab="${savedTab}"]`)) {
+    activateTab(savedTab);
+  }
+})();
 
 document.getElementById("generateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
 document.getElementById("regenerateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
