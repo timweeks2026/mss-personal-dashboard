@@ -287,6 +287,15 @@
     border: 1px solid var(--border); background: #fff; color: var(--text);
     min-width: 280px; cursor: pointer;
   }
+  .inline-control-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 4px; }
+  .inline-control-row .inline-control { margin: 0; }
+  .inline-control-row .inline-control select { min-width: 170px; font-size: 12.5px; padding: 6px 10px; }
+  .radio-group-light { display: flex; gap: 12px; }
+  .radio-group-light label {
+    display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text);
+    cursor: pointer; margin-bottom: 0;
+  }
+  .radio-group-light input { cursor: pointer; }
 
   /* ---- Changes Analysis tab ---- */
   .analysis-summary {
@@ -567,6 +576,19 @@
           <div id="accountTrendList" class="at-list"></div>
         </div>
         <div class="at-charts-col">
+          <div class="inline-control-row">
+            <div class="inline-control">
+              <label for="accountTrendColorSelect">Line Colors</label>
+              <select id="accountTrendColorSelect"></select>
+            </div>
+            <div class="inline-control">
+              <label>Chart Type</label>
+              <div class="radio-group-light">
+                <label><input type="radio" name="accountChartMode" value="lines" checked> Separate Lines</label>
+                <label><input type="radio" name="accountChartMode" value="stacked"> Stacked Columns</label>
+              </div>
+            </div>
+          </div>
           <div id="chartsEmpty" class="empty-note" style="display:none;">Check one or more accounts on the left to see their trend.</div>
           <div id="chartsContent">
             <div class="section-sub" id="chartsHeading" style="font-weight:600; color:var(--navy);"></div>
@@ -5532,22 +5554,48 @@ function renderAnalysis(entVal, companies) {
 // no longer one "current account" for a chip row to describe once multiple
 // lines can be shown at once; the legend + tooltip serve that role instead.
 
+// A "coded parent" account is one whose Standard Account name starts with a
+// numeric ledger code (e.g. "40100 CFO Services") -- QuickBooks parent
+// accounts typically hold no direct postings, the real dollars sit on child
+// accounts named by family resemblance to the parent's own label (e.g.
+// "CFO Services (Monthly)"), not a strict sub-account convention. Only rolls
+// up when (a) the parent's own direct total is genuinely zero -- never
+// touches an account that already has real postings of its own -- and
+// (b) the match is an exact prefix, never a fuzzy guess, per this project's
+// standing rule to never silently guess account membership by name alone
+// (see ONBOARDING.md's Business Lines section for the precedent).
+const CODED_ACCOUNT_RE = /^\d{4,6}\s+(.+)$/;
+
 function buildAccountSeries(sectionKey, account, companies) {
   const n = monthLabels.length;
-  const values = zeros(n);
+  const direct = zeros(n);
   for (const rec of records) {
     if (rec.section !== sectionKey || rec.standardAccount !== account) continue;
     if (!companies.includes(rec.company)) continue;
-    addInto(values, rec.values);
+    addInto(direct, rec.values);
   }
-  return values;
+  const codedMatch = account.match(CODED_ACCOUNT_RE);
+  if (!codedMatch || direct.some(v => v !== 0)) return direct;
+
+  const rootLabel = codedMatch[1].trim().toLowerCase();
+  const rolledUp = zeros(n);
+  for (const rec of records) {
+    if (rec.section !== sectionKey || rec.standardAccount === account) continue;
+    if (!companies.includes(rec.company)) continue;
+    if (rec.standardAccount.toLowerCase().startsWith(rootLabel)) addInto(rolledUp, rec.values);
+  }
+  return rolledUp;
 }
 
 // Multi-select state — persists across re-renders like expandedKeys does.
 // IDs are namespaced by kind so summary/P&L-account/budget-category/BS-
 // category items can never collide with each other.
 let chartSelectedIds = new Set();
-const CHART_COLORS = ["#1a73e8", "#d6293a", "#1e8e3e", "#b8860b", "#8a4fbd", "#e07a3e", "#2e8b8b", "#a83e6c", "#5c6bc0", "#7a8450"];
+let accountTrendsColorScheme = localStorage.getItem("accountTrendsColorScheme") || "classicBlue";
+function activeAccountTrendsPalette() {
+  return (FIVE_YEAR_PALETTES[accountTrendsColorScheme] || FIVE_YEAR_PALETTES.classicBlue).colors;
+}
+let accountChartMode = localStorage.getItem("accountChartMode") || "lines";
 
 // Builds the ordered, grouped list of everything selectable: P&L Summary
 // first, then each P&L section in the same order as the P&L Statement
@@ -5673,12 +5721,13 @@ function renderCharts(companies, summaryLines, budgetTree) {
   for (let i = startIdx; i <= endIdx; i++) idxRange.push(i);
   const xLabels = idxRange.map(i => months[i].label);
 
+  const palette = activeAccountTrendsPalette();
   const dollarSeriesList = selected.map((it, i) => ({
-    label: it.label, color: CHART_COLORS[i % CHART_COLORS.length],
+    label: it.label, color: palette[i % palette.length],
     values: idxRange.map(idx => it.series[idx])
   }));
   const pctSeriesList = selected.map((it, i) => ({
-    label: it.label, color: CHART_COLORS[i % CHART_COLORS.length],
+    label: it.label, color: palette[i % palette.length],
     values: idxRange.map(idx => (revenueSeries[idx] ? it.series[idx] / revenueSeries[idx] : null))
   }));
 
@@ -5688,8 +5737,9 @@ function renderCharts(companies, summaryLines, budgetTree) {
 
   renderAccountTrendLegend("chartDollarLegend", dollarSeriesList);
   renderAccountTrendLegend("chartPctLegend", pctSeriesList);
-  renderMultiLineChart(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), xLabels, dollarSeriesList, false);
-  renderMultiLineChart(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), xLabels, pctSeriesList, true);
+  const chartFn = accountChartMode === "stacked" ? renderStackedColumnChart : renderMultiLineChart;
+  chartFn(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), xLabels, dollarSeriesList, false);
+  chartFn(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), xLabels, pctSeriesList, true);
   syncAccountTrendListHeight();
 }
 
@@ -5847,6 +5897,120 @@ function renderMultiLineChart(svg, tooltip, xLabels, seriesList, isPct) {
   overlay.addEventListener("pointerleave", () => {
     crosshair.setAttribute("visibility", "hidden");
     tooltip.style.display = "none";
+  });
+}
+
+// Stacked-column alternative to renderMultiLineChart, toggled via the Chart
+// Type radio group — same xLabels/seriesList shape (each already carries its
+// palette color), just piled into one bar per month instead of separate
+// lines. Positive values stack upward from a running positive total and
+// negative values stack downward from a running negative total, so mixing
+// an expense account with a contra/negative one doesn't produce a
+// nonsensical combined bar.
+function renderStackedColumnChart(svg, tooltip, xLabels, seriesList, isPct) {
+  const fmt = isPct ? fmtPct : fmtMoney;
+  const W = 860, H = 138;
+  const padL = 68, padR = 20, padT = 16, padB = 42;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const NS = "http://www.w3.org/2000/svg";
+
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = "";
+  tooltip.style.display = "none";
+
+  const n = xLabels.length;
+  if (!n || !seriesList.length) return;
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function textEl(x, y, str, attrs) {
+    const t = el("text", Object.assign({ x, y }, attrs));
+    t.textContent = str;
+    return t;
+  }
+
+  const posTotals = new Array(n).fill(0), negTotals = new Array(n).fill(0);
+  seriesList.forEach(s => {
+    s.values.forEach((v, i) => {
+      const val = v == null ? 0 : v;
+      if (val >= 0) posTotals[i] += val; else negTotals[i] += val;
+    });
+  });
+  const { min: domMin, max: domMax, ticks } = buildNiceTicks(Math.min(0, ...negTotals), Math.max(0, ...posTotals), 4);
+  const domSpan = (domMax - domMin) || 1;
+
+  const groupW = chartW / n;
+  const barW = groupW * 0.6;
+  const yAt = v => padT + chartH - ((v - domMin) / domSpan) * chartH;
+  const y0 = yAt(0);
+
+  ticks.forEach(v => {
+    const y = yAt(v);
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+  });
+  if (domMin < 0 && domMax > 0) {
+    svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
+  }
+
+  for (let i = 0; i < n; i++) {
+    const cx = padL + i * groupW + groupW / 2;
+    svg.appendChild(textEl(cx, padT + chartH + 14, xLabels[i], {
+      "text-anchor": "end", "font-size": "9", fill: "#6b7684", transform: `rotate(-60 ${cx} ${padT + chartH + 14})`
+    }));
+  }
+
+  const posRunning = new Array(n).fill(0), negRunning = new Array(n).fill(0);
+  seriesList.forEach(s => {
+    for (let i = 0; i < n; i++) {
+      const raw = s.values[i];
+      const val = raw == null ? 0 : raw;
+      if (val === 0) continue;
+      const x = padL + i * groupW + (groupW - barW) / 2;
+      let segTop, segBottom;
+      if (val > 0) {
+        segBottom = posRunning[i];
+        segTop = posRunning[i] + val;
+        posRunning[i] = segTop;
+      } else {
+        segTop = negRunning[i];
+        segBottom = negRunning[i] + val;
+        negRunning[i] = segBottom;
+      }
+      const yTop = yAt(segTop), yBottom = yAt(segBottom);
+      const rect = el("rect", {
+        x: x + 0.5, y: Math.min(yTop, yBottom), width: Math.max(1, barW - 1),
+        height: Math.max(1, Math.abs(yBottom - yTop)), fill: s.color
+      });
+      svg.appendChild(rect);
+
+      rect.addEventListener("pointerenter", () => {
+        tooltip.style.display = "block";
+        tooltip.innerHTML = "";
+        const valEl = document.createElement("div");
+        valEl.className = "chart-tooltip-value";
+        valEl.textContent = fmt(val);
+        const lblEl = document.createElement("div");
+        lblEl.className = "chart-tooltip-label";
+        lblEl.textContent = `${s.label} · ${xLabels[i]}`;
+        tooltip.appendChild(valEl);
+        tooltip.appendChild(lblEl);
+
+        const rectBox = svg.getBoundingClientRect();
+        const px = ((x + barW / 2) / W) * rectBox.width;
+        const py = (Math.min(yTop, yBottom) / H) * rectBox.height;
+        let left = px - 55, top = py - 40;
+        if (left < 0) left = 0;
+        if (left + 110 > rectBox.width) left = rectBox.width - 110;
+        tooltip.style.left = Math.max(0, left) + "px";
+        tooltip.style.top = Math.max(0, top) + "px";
+      });
+      rect.addEventListener("pointerleave", () => { tooltip.style.display = "none"; });
+    }
   });
 }
 
@@ -6091,6 +6255,25 @@ document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("atClearAllBtn").addEventListener("click", () => {
   chartSelectedIds.clear();
   render();
+});
+
+(function initAccountTrendColorSelect() {
+  const sel = document.getElementById("accountTrendColorSelect");
+  Object.entries(FIVE_YEAR_PALETTES).forEach(([key, def]) => sel.appendChild(new Option(def.label, key)));
+  sel.value = accountTrendsColorScheme;
+  sel.addEventListener("change", () => {
+    accountTrendsColorScheme = sel.value;
+    localStorage.setItem("accountTrendsColorScheme", accountTrendsColorScheme);
+    render();
+  });
+})();
+document.querySelectorAll('input[name="accountChartMode"]').forEach(r => {
+  r.checked = r.value === accountChartMode;
+  r.addEventListener("change", () => {
+    accountChartMode = document.querySelector('input[name="accountChartMode"]:checked').value;
+    localStorage.setItem("accountChartMode", accountChartMode);
+    render();
+  });
 });
 document.getElementById("fiveYearLinePicker").addEventListener("change", render);
 
