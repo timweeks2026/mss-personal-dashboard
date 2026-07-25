@@ -831,6 +831,19 @@
     <button type="button" class="modal-close" id="drillModalClose">✕</button>
     <div class="modal-title" id="drillModalTitle"></div>
     <div class="modal-sub" id="drillModalSub"></div>
+    <div id="drillPeriodPicker" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin: 2px 0 8px;">
+      <label style="font-size:12px; color:var(--muted);">Show activity:</label>
+      <select id="drillPeriodPreset">
+        <option value="30">Last 30 days</option>
+        <option value="60" selected>Last 60 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="custom">Custom range</option>
+      </select>
+      <span id="drillCustomRangeRow" style="display:none; align-items:center; gap:6px;">
+        <input type="date" id="drillCustomStart"> to <input type="date" id="drillCustomEnd">
+      </span>
+      <button type="button" class="btn-secondary" id="drillPeriodApplyBtn">Apply</button>
+    </div>
     <div class="modal-sub" style="font-style:italic;">Reflects the raw GL Detail export. For some personal-side accounts this doesn't reconcile exactly to the P&amp;L Detail (Mapped) figure shown above — a real, discovered gap between the two sources, not a display error. See CLAUDE.md, "Universal transaction drill-down" section.</div>
     <div class="table-wrap"><table id="drillModalTable"></table></div>
     <div style="text-align:center; margin-top:10px;">
@@ -3782,7 +3795,11 @@ function buildRow(rowClass, labelHtml, cells, expandKey) {
       // stopPropagation: a row with an expandKey also carries the row-level
       // "expand-toggle" click handler above — without stopping propagation,
       // clicking a drillable dollar figure would also collapse/expand the row.
-      td.addEventListener("click", (e) => { e.stopPropagation(); openStatementDrillDown(c.drill); });
+      td.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (c.drill.kind === "bsAccount") openBalanceSheetDrillDown(c.drill);
+        else openStatementDrillDown(c.drill);
+      });
     }
     tr.appendChild(td);
   });
@@ -3797,6 +3814,7 @@ function buildRow(rowClass, labelHtml, cells, expandKey) {
 // specific entity) — a company from the "wrong" entity never leaks into a
 // modal's total.
 function openStatementDrillDown(drill) {
+  document.getElementById("drillPeriodPicker").style.display = "none";
   showDrillModal("Loading transaction detail…", "Fetching GL Detail (one-time per session)…", []);
   document.getElementById("drillLoadMoreBtn").style.display = "none";
   waitForGLDrillData().then(() => {
@@ -3809,6 +3827,62 @@ function openStatementDrillDown(drill) {
       .sort((a, b) => a.date - b.date);
     const title = drill.kind === "account" ? drill.account : sectionDisplayLabel(drill.section);
     showDrillModal(title, drill.label, txns);
+  }).catch(err => {
+    document.getElementById("drillModalSub").textContent = "Couldn't load transaction detail: " + ((err && err.message) || err);
+  });
+}
+
+// ---- Balance Sheet drill-down: a balance is a point-in-time figure, not a
+// period sum, so instead of This-Month/YTD/TTM ranges this shows recent
+// activity leading up to the as-of date that was clicked (Balance/Prior
+// Month/Prior Year each carry their own as-of month index) -- default a
+// trailing 60 days, with a period picker in the modal itself (30/60/90/
+// custom) to widen or narrow it without re-opening. Trailing-average
+// columns are deliberately not drillable (no single as-of date, same
+// exclusion the Budget tab's own trailing averages get).
+let currentDrillContext = null;
+
+function openBalanceSheetDrillDown(drill) {
+  const end = new Date(months[drill.asOfIdx].year, months[drill.asOfIdx].monthNum + 1, 1);
+  currentDrillContext = { account: drill.account, companies: drill.companies, endDateExclusive: end };
+  const preset = document.getElementById("drillPeriodPreset");
+  preset.value = "60";
+  document.getElementById("drillCustomRangeRow").style.display = "none";
+  document.getElementById("drillPeriodPicker").style.display = "flex";
+  const start = new Date(end);
+  start.setDate(start.getDate() - 60);
+  runAccountDateRangeDrill(drill.account, drill.companies, start, end);
+}
+
+function runAccountDateRangeDrill(account, companies, start, end) {
+  showDrillModal("Loading transaction detail…", "Fetching GL Detail (one-time per session)…", []);
+  document.getElementById("drillLoadMoreBtn").style.display = "none";
+  waitForGLDrillData().then(() => {
+    const txns = glDrillRecords
+      .filter(row => companies.includes(row.company) && row.account === account && row.date >= start && row.date < end)
+      .slice()
+      .sort((a, b) => a.date - b.date);
+    const endLabel = new Date(end.getTime() - 86400000).toLocaleDateString("en-US");
+    showDrillModal(account, `${start.toLocaleDateString("en-US")} – ${endLabel}`, txns);
+  }).catch(err => {
+    document.getElementById("drillModalSub").textContent = "Couldn't load transaction detail: " + ((err && err.message) || err);
+  });
+}
+
+// ---- Recurring Payments drill-down: a cluster's "Amount"/"Annualized"
+// figures aren't a period sum either -- shows every real transaction the
+// recurrence detection actually grouped into this cluster (same payee +
+// account + company), across all available GL history, no date range.
+function openRecurringDrillDown(cluster) {
+  document.getElementById("drillPeriodPicker").style.display = "none";
+  showDrillModal("Loading transaction detail…", "Fetching GL Detail (one-time per session)…", []);
+  document.getElementById("drillLoadMoreBtn").style.display = "none";
+  waitForGLDrillData().then(() => {
+    const txns = glDrillRecords
+      .filter(row => row.company === cluster.company && row.account === cluster.account && row.payee === cluster.payee)
+      .slice()
+      .sort((a, b) => a.date - b.date);
+    showDrillModal(cluster.payee, `${cluster.account} — ${cluster.company}`, txns);
   }).catch(err => {
     document.getElementById("drillModalSub").textContent = "Couldn't load transaction detail: " + ((err && err.message) || err);
   });
@@ -3925,6 +3999,28 @@ function renderDrillPage() {
   }
 }
 document.getElementById("drillLoadMoreBtn").addEventListener("click", renderDrillPage);
+document.getElementById("drillPeriodPreset").addEventListener("change", () => {
+  const isCustom = document.getElementById("drillPeriodPreset").value === "custom";
+  document.getElementById("drillCustomRangeRow").style.display = isCustom ? "inline-flex" : "none";
+});
+document.getElementById("drillPeriodApplyBtn").addEventListener("click", () => {
+  if (!currentDrillContext) return;
+  const preset = document.getElementById("drillPeriodPreset").value;
+  let start, end;
+  if (preset === "custom") {
+    const s = document.getElementById("drillCustomStart").value;
+    const e = document.getElementById("drillCustomEnd").value;
+    if (!s || !e) return;
+    start = new Date(s + "T00:00:00");
+    end = new Date(e + "T00:00:00");
+    end.setDate(end.getDate() + 1); // inclusive end date -> exclusive boundary
+  } else {
+    end = currentDrillContext.endDateExclusive;
+    start = new Date(end);
+    start.setDate(start.getDate() - parseInt(preset, 10));
+  }
+  runAccountDateRangeDrill(currentDrillContext.account, currentDrillContext.companies, start, end);
+});
 document.getElementById("drillModalClose").addEventListener("click", () => {
   document.getElementById("drillModal").classList.remove("show");
 });
@@ -3939,7 +4035,13 @@ document.getElementById("drillModal").addEventListener("click", (e) => {
 // Derived from AVG_WINDOWS (not hardcoded) so this can never drift out of
 // sync with the actual number of trailing-average columns buildBsCells emits.
 const BS_COL_LABELS = ["Balance", "Prior Month", "Prior Year", ...AVG_WINDOWS.map(w => w.label + " Avg")];
-function buildBsCells(values, idx) {
+// drillAccount (only passed for a genuine single-account detail row, never
+// a category total) wires up the Balance/Prior Month/Prior Year columns for
+// the Balance Sheet's own drill-down flavor -- each is its own as-of date,
+// so each gets its own kind:"bsAccount" drill with that column's month
+// index. Trailing-average columns are never drillable (see
+// openBalanceSheetDrillDown's comment).
+function buildBsCells(values, idx, drillAccount, drillCompanies) {
   const current = values[idx];
   const priorMonth = idx >= 1 ? values[idx - 1] : null;
   const priorYear = idx >= 12 ? values[idx - 12] : null;
@@ -3948,6 +4050,11 @@ function buildBsCells(values, idx) {
     { text: priorMonth != null ? fmtMoney(priorMonth) : "—" },
     { text: priorYear != null ? fmtMoney(priorYear) : "—", grpStart: true }
   ];
+  if (drillAccount) {
+    cells[0].drill = { kind: "bsAccount", account: drillAccount, companies: drillCompanies, asOfIdx: idx };
+    if (priorMonth != null) cells[1].drill = { kind: "bsAccount", account: drillAccount, companies: drillCompanies, asOfIdx: idx - 1 };
+    if (priorYear != null) cells[2].drill = { kind: "bsAccount", account: drillAccount, companies: drillCompanies, asOfIdx: idx - 12 };
+  }
   AVG_WINDOWS.forEach(w => {
     const avg = trailingAverage(values, idx, w.months);
     cells.push({ text: avg != null ? fmtMoney(avg) : "N/A" });
@@ -3980,8 +4087,8 @@ function renderBalanceSheet(entVal, companies) {
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
-  function addDetail(label, values, rowKey) {
-    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildBsCells(values, currentMonthIdx));
+  function addDetail(label, values, rowKey, account) {
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildBsCells(values, currentMonthIdx, account, companies));
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
@@ -4001,7 +4108,7 @@ function renderBalanceSheet(entVal, companies) {
       addInto(total, catTotal);
       const key = "bs_" + cat;
       addLine(BS_CATEGORY_LABEL[cat], catTotal, key);
-      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values, key + "::" + r.account));
+      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values, key + "::" + r.account, r.account));
     });
     return total;
   }
@@ -4069,8 +4176,14 @@ function renderCashFlow(entVal, companies) {
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
-  function addDetail(label, series, rowKey) {
-    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false));
+  // account/company (only passed for a genuine single Cash Flow leaf row,
+  // never a rollup) wires up drill-down scoped to just that one company —
+  // these rows are per-(account, company), so a naive drill against the
+  // whole entity selection would pull in the OTHER company's transactions
+  // for the same account name too when viewing Consolidated.
+  function addDetail(label, series, rowKey, account, company) {
+    const drillMeta = account ? { kind: "account", account, companies: [company] } : null;
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false, drillMeta));
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
@@ -4079,7 +4192,7 @@ function renderCashFlow(entVal, companies) {
     tbody.appendChild(buildRow("section-sub-header", label, blanks));
   }
   function addDetailRows(rows, expandKey) {
-    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values, expandKey + "::" + r.account + "::" + r.company));
+    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values, expandKey + "::" + r.account + "::" + r.company, r.account, r.company));
   }
 
   addSummary("Net Income", model.netIncome, null, null, "cf_netIncome");
@@ -5060,6 +5173,11 @@ function renderRecurringPayments() {
     const amountTd = document.createElement("td"); amountTd.textContent = fmtMoney(c.medianAmount); tr.appendChild(amountTd);
     const occTd = document.createElement("td"); occTd.textContent = c.occurrences; tr.appendChild(occTd);
     const annualTd = document.createElement("td"); annualTd.textContent = fmtMoney(c.annualizedCost); tr.appendChild(annualTd);
+    [amountTd, annualTd].forEach(td => {
+      td.classList.add("drill-cell");
+      td.title = "Click to see the transactions behind this figure";
+      td.addEventListener("click", (e) => { e.stopPropagation(); openRecurringDrillDown(c); });
+    });
     const lastTd = document.createElement("td"); lastTd.textContent = fmtGLDate(c.lastDate); tr.appendChild(lastTd);
 
     const statusTd = document.createElement("td");
