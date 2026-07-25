@@ -1671,6 +1671,11 @@ function renderBusinessLines(companies) {
   const tbody = document.createElement("tbody");
 
   function addSummaryRow(label, series, polarity, expandKey) {
+    // No drillMeta here — a business line's Revenue/Cost of Sales/Gross
+    // Profit total is a custom subset of accounts (whichever ones are
+    // assigned to this line), not the whole Income/COS section nor a single
+    // account, so neither drill "kind" the modal supports actually matches
+    // what this row represents.
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
     tbody.appendChild(buildRow("summary-line", labelWithChevron(label, expandKey), cells, expandKey));
   }
@@ -1678,8 +1683,9 @@ function renderBusinessLines(companies) {
     const cells = buildPeriodCells(periodPairsForRatio(pctOfRevenue.num, pctOfRevenue.den, currentMonthIdx), polarity, true);
     tbody.appendChild(buildRow("margin-line", "% of Revenue", cells));
   }
-  function addDetailRow(label, series, polarity) {
-    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false);
+  function addDetailRow(label, series, polarity, account, sectionKey) {
+    const drillMeta = account ? { kind: "account", account, companies } : null;
+    const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false, drillMeta);
     tbody.appendChild(buildRow("detail", label, cells));
   }
 
@@ -1687,7 +1693,7 @@ function renderBusinessLines(companies) {
     addSummaryRow(line.label, line.series, line.polarity, line.expandRows ? line.key : null);
     addPctRow(line.pctOfRevenue, line.polarity);
     if (line.expandRows && expandedKeys.has(line.key)) {
-      line.expandRows.forEach(r => addDetailRow(r.account, r.values, line.polarity));
+      line.expandRows.forEach(r => addDetailRow(r.account, r.values, line.polarity, r.account));
     }
   });
 
@@ -3808,6 +3814,29 @@ function openStatementDrillDown(drill) {
   });
 }
 
+// Whether a name is a genuine single P&L account that exists in the raw
+// GL-mapped records, as opposed to a "Merge As" label combining 2+ accounts,
+// a debt/loan-principal row derived from Balance Sheet deltas (no GL
+// "account" of its own), or a Budget-tab category/summary rollup covering
+// many accounts -- only a genuine single account maps to exactly one
+// filterable GL query. kind:"account" drill filtering is account-name-only
+// (no section needed, see openStatementDrillDown above), so this check
+// alone is sufficient regardless of which section the account lives in.
+function isDrillableAccountName(name, companies) {
+  return records.some(r => r.standardAccount === name && companies.includes(r.company));
+}
+
+// Used by Compare (Actual vs Budget) and History, both of which render off
+// buildBudgetTree's node structure — a leaf node's own label is safe to
+// drill only when it's a genuine account (see isDrillableAccountName);
+// category/summary rollup nodes (children.length > 0) and debt/loan
+// principal leaves are never drillable, same scope rule as the P&L
+// Statement's own drill-down uses for Gross Profit/Operating Income/etc.
+function drillMetaForBudgetLeaf(node, companies) {
+  if (!node || node.children.length || node.key.startsWith("debt::")) return null;
+  return isDrillableAccountName(node.label, companies) ? { kind: "account", account: node.label, companies } : null;
+}
+
 // ---- Shared drill-down modal. Paginates at 50 rows/page ("Load Next 50")
 // since some periods/accounts have hundreds of real transactions; the
 // header total/count always reflect the FULL matching set regardless of how
@@ -4686,11 +4715,20 @@ function renderCompare(summaryLines, sectionData, companies, entVal) {
     ];
   }
   function cellsFor(node, polarity) {
+    const drillMeta = drillMetaForBudgetLeaf(node, companies);
     const actualM = node.series[endIdx] || 0;
     const budgetM = node.monthlyBudget;
     const actualYtd = ytd ? sumRange(node.series, ytd[0], ytd[1]) : 0;
     const budgetYtd = budgetM * ytdMonths;
-    return [...pairCells(actualM, budgetM, polarity), ...pairCells(actualYtd, budgetYtd, polarity)];
+    const monthCells = pairCells(actualM, budgetM, polarity);
+    const ytdCells = pairCells(actualYtd, budgetYtd, polarity);
+    // Only the "Actual" cell (index 0 of each pair) is ever drillable —
+    // Budget isn't GL-backed, and Δ$/Δ% are derived from both.
+    if (drillMeta) {
+      monthCells[0].drill = { ...drillMeta, range: [endIdx, endIdx], label: months[endIdx].label };
+      if (ytd) ytdCells[0].drill = { ...drillMeta, range: ytd, label: `YTD through ${months[endIdx].label}` };
+    }
+    return [...monthCells, ...ytdCells];
   }
   function addNode(node, polarity, depth) {
     const hasChildren = node.children.length > 0;
@@ -4788,10 +4826,12 @@ function renderHistory(summaryLines, sectionData, companies, entVal) {
 
   const tbody = document.createElement("tbody");
   function cellsFor(node) {
+    const drillMeta = drillMetaForBudgetLeaf(node, companies);
     return periods.map(p => {
       if (!p.range) return { text: "N/A" };
       const v = sumRange(node.series, p.range[0], p.range[1]);
       const cell = { text: fmtMoney(v) };
+      if (drillMeta) cell.drill = { ...drillMeta, range: p.range, label: p.label };
       return cell;
     });
   }
@@ -5600,7 +5640,7 @@ function buildAccountSeries(sectionKey, account, companies) {
 // Multi-select state — persists across re-renders like expandedKeys does.
 // IDs are namespaced by kind so summary/P&L-account/budget-category/BS-
 // category items can never collide with each other.
-let chartSelectedIds = new Set();
+let chartSelectedIds = new Set(["summary::grossProfit"]);
 let accountTrendsColorScheme = localStorage.getItem("accountTrendsColorScheme") || "classicBlue";
 // Reversed (darkest first) vs. the underlying FIVE_YEAR_PALETTES definitions:
 // the first-selected account gets the boldest/most-visible color instead of
@@ -6157,12 +6197,9 @@ function renderFiveYearTrends(companies, summaryLines, budgetTree) {
   const summaryItems = items.filter(it => it.group === "P&L Summary");
   const detailItems = items.filter(it => it.group !== "P&L Summary");
 
-  // Default to Gross Profit rather than the first summary line (Revenue) so
-  // the tab loads with a chart that's meaningfully "there" on first view.
-  const defaultId = summaryItems.find(it => it.id === "summary::grossProfit") || summaryItems[0];
   const resolvedId = items.some(it => it.id === fiveYearActiveId)
     ? fiveYearActiveId
-    : (defaultId && defaultId.id);
+    : (summaryItems[0] && summaryItems[0].id);
   fiveYearActiveId = resolvedId;
 
   populateFiveYearPicker(summaryItems, resolvedId);
