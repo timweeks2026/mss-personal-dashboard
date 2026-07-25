@@ -403,7 +403,13 @@
 
   /* ---- 5-Year Trends tab: left-side line picker + narrower charts ---- */
   .fiveyear-layout { display: flex; align-items: flex-start; gap: 16px; }
-  .fiveyear-picker { flex: 0 0 168px; display: flex; flex-direction: column; gap: 2px; }
+  .fiveyear-picker-col { flex: 0 0 210px; display: flex; flex-direction: column; }
+  .fiveyear-picker { display: flex; flex-direction: column; gap: 2px; }
+  .fiveyear-detail-head {
+    font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.3px; margin: 12px 0 6px;
+  }
+  .fiveyear-picker-col .at-list { height: 300px; }
   .fiveyear-line-option {
     display: flex; align-items: center; gap: 7px; padding: 5px 9px; border-radius: 6px;
     font-size: 12.5px; color: var(--text); cursor: pointer;
@@ -623,7 +629,11 @@
       <h2 class="section-title">5-Year Trends</h2>
       <div class="section-sub">Compare a P&amp;L line across the last 5 years, by calendar month and cumulative year-to-date, for the entity selected above.</div>
       <div class="fiveyear-layout">
-        <div class="fiveyear-picker" id="fiveYearLinePicker"></div>
+        <div class="fiveyear-picker-col">
+          <div class="fiveyear-picker" id="fiveYearLinePicker"></div>
+          <div class="fiveyear-detail-head">Or choose an account / category</div>
+          <div class="at-list" id="fiveYearDetailPicker"></div>
+        </div>
         <div class="fiveyear-charts" id="fiveYearContent">
         <div class="section-sub" id="fiveYearHeading" style="font-weight:600; color:var(--navy);"></div>
         <div class="chart-card compact">
@@ -3391,7 +3401,7 @@ function render() {
   // tab itself renders rather than recomputing category membership a second way.
   const chartsBudgetTree = buildBudgetTree(summaryLines, sectionData, buildSocfCashFlowModel(companies));
   renderCharts(companies, summaryLines, chartsBudgetTree);
-  renderFiveYearTrends(companies, summaryLines);
+  renderFiveYearTrends(companies, summaryLines, chartsBudgetTree);
   renderBalanceSheet(entVal, companies);
   renderCashFlow(entVal, companies);
   renderTypicalMonth(summaryLines, sectionData, companies, entVal);
@@ -5592,8 +5602,14 @@ function buildAccountSeries(sectionKey, account, companies) {
 // category items can never collide with each other.
 let chartSelectedIds = new Set();
 let accountTrendsColorScheme = localStorage.getItem("accountTrendsColorScheme") || "classicBlue";
+// Reversed (darkest first) vs. the underlying FIVE_YEAR_PALETTES definitions:
+// the first-selected account gets the boldest/most-visible color instead of
+// the lightest one. 5-Year Trends keeps the un-reversed light-to-dark order
+// via activeFiveYearPalette() -- its current-year-is-darkest convention is
+// unaffected by this. Copies with slice() before reversing so the shared
+// FIVE_YEAR_PALETTES arrays are never mutated in place.
 function activeAccountTrendsPalette() {
-  return (FIVE_YEAR_PALETTES[accountTrendsColorScheme] || FIVE_YEAR_PALETTES.classicBlue).colors;
+  return (FIVE_YEAR_PALETTES[accountTrendsColorScheme] || FIVE_YEAR_PALETTES.classicBlue).colors.slice().reverse();
 }
 let accountChartMode = localStorage.getItem("accountChartMode") || "lines";
 
@@ -5629,13 +5645,33 @@ function buildAccountTrendItems(companies, summaryLines, budgetTree) {
     ? fixedParentNode.children.filter(n => n.key.startsWith("typ_expcat_") && n.key !== "typ_expfixed_general")
     : [];
 
+  // Merge As groups — the Budget tab's other grouping mechanism, where
+  // typing the same label into 2+ Expenses accounts (e.g. "Cell Phone"
+  // combining "Cell Phone - Tim" + "Cell Phone - Hilary") folds them into
+  // one row there. Not part of budgetTree's own per-category nesting, so
+  // recomputed directly from records the same way the Budget tab itself
+  // looks up mergeAsOf() per account — only applies to Expenses, matching
+  // the Budget tab's own scope for Category folding.
+  const mergedExpenseGroups = new Map();
+  for (const rec of records) {
+    if (rec.section !== "Expenses" || !companies.includes(rec.company)) continue;
+    const mergeLabel = mergeAsOf(typicalAccountKey("pl_Expenses", rec.standardAccount, null));
+    if (!mergeLabel) continue;
+    if (!mergedExpenseGroups.has(mergeLabel)) mergedExpenseGroups.set(mergeLabel, zeros(monthLabels.length));
+    addInto(mergedExpenseGroups.get(mergeLabel), rec.values);
+  }
+
   SECTION_KEYS.forEach(sectionKey => {
     const accounts = bySection.get(sectionKey);
     const catNodes = sectionKey === "Expenses" ? categoryNodes : [];
-    if ((!accounts || !accounts.size) && !catNodes.length) return;
+    const mergeGroups = sectionKey === "Expenses" ? [...mergedExpenseGroups.entries()] : [];
+    if ((!accounts || !accounts.size) && !catNodes.length && !mergeGroups.length) return;
     const groupLabel = sectionDisplayLabel(sectionKey);
     catNodes.forEach(node => {
       items.push({ group: groupLabel, id: "budgetcat::" + node.key, label: node.label + " (Budget Category)", series: node.series });
+    });
+    mergeGroups.sort((a, b) => a[0].localeCompare(b[0])).forEach(([label, series]) => {
+      items.push({ group: groupLabel, id: "mergecat::" + sectionKey + "::" + label, label: label + " (Merged)", series });
     });
     if (accounts) {
       [...accounts].sort((a, b) => a.localeCompare(b)).forEach(acct => {
@@ -5822,7 +5858,7 @@ function renderMultiLineChart(svg, tooltip, xLabels, seriesList, isPct) {
   ticks.forEach(v => {
     const y = yAt(v);
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
-    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "8", fill: "#6b7684" }));
   });
   if (domMin < 0 && domMax > 0) {
     const y0 = yAt(0);
@@ -5833,7 +5869,7 @@ function renderMultiLineChart(svg, tooltip, xLabels, seriesList, isPct) {
     const x = xAt(i);
     svg.appendChild(el("line", { x1: x, x2: x, y1: padT + chartH, y2: padT + chartH + 4, stroke: "#b9c2cc", "stroke-width": 1 }));
     svg.appendChild(textEl(x, padT + chartH + 14, label, {
-      "text-anchor": "end", "font-size": "9", fill: "#6b7684",
+      "text-anchor": "end", "font-size": "7", fill: "#6b7684",
       transform: `rotate(-60 ${x} ${padT + chartH + 14})`
     }));
   });
@@ -5951,7 +5987,7 @@ function renderStackedColumnChart(svg, tooltip, xLabels, seriesList, isPct) {
   ticks.forEach(v => {
     const y = yAt(v);
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y, y2: y, stroke: "#d8dee6", "stroke-width": 1 }));
-    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "10", fill: "#6b7684" }));
+    svg.appendChild(textEl(padL - 8, y + 3, fmt(v), { "text-anchor": "end", "font-size": "8", fill: "#6b7684" }));
   });
   if (domMin < 0 && domMax > 0) {
     svg.appendChild(el("line", { x1: padL, x2: padL + chartW, y1: y0, y2: y0, stroke: "#b9c2cc", "stroke-width": 1 }));
@@ -5960,7 +5996,7 @@ function renderStackedColumnChart(svg, tooltip, xLabels, seriesList, isPct) {
   for (let i = 0; i < n; i++) {
     const cx = padL + i * groupW + groupW / 2;
     svg.appendChild(textEl(cx, padT + chartH + 14, xLabels[i], {
-      "text-anchor": "end", "font-size": "9", fill: "#6b7684", transform: `rotate(-60 ${cx} ${padT + chartH + 14})`
+      "text-anchor": "end", "font-size": "7", fill: "#6b7684", transform: `rotate(-60 ${cx} ${padT + chartH + 14})`
     }));
   }
 
@@ -6016,27 +6052,58 @@ function renderStackedColumnChart(svg, tooltip, xLabels, seriesList, isPct) {
 
 // ---- 5-Year Trends tab ----
 
-// Rebuilt on every render (cheap, 7 options) — the currently-checked value is
-// read before clearing so re-renders (entity change, month change, etc.)
-// don't reset the user's selection. A single delegated "change" listener on
-// the container (wired once, outside this function) handles all of them.
-function populateFiveYearPicker(summaryLines) {
+// Rebuilt on every render (cheap) — which single item is active lives in the
+// shared fiveYearActiveId variable (set by either box's change listener),
+// not read back off the DOM, so the two boxes never disagree about which
+// one item is currently charted. A single delegated "change" listener on
+// each container (wired once, outside this function) handles all of them.
+function populateFiveYearPicker(items, resolvedId) {
   const container = document.getElementById("fiveYearLinePicker");
-  const prevChecked = container.querySelector('input[name="fiveYearLine"]:checked');
-  const prevValue = prevChecked ? prevChecked.value : null;
-  const stillValid = prevValue && summaryLines.some(l => l.key === prevValue);
   container.innerHTML = "";
-  summaryLines.forEach((line, i) => {
-    const id = "fiveYearLine_" + line.key;
+  items.forEach(item => {
+    const id = "fiveYearLine_" + item.id;
     const label = document.createElement("label");
     label.className = "fiveyear-line-option";
     label.htmlFor = id;
     const input = document.createElement("input");
-    input.type = "radio"; input.name = "fiveYearLine"; input.id = id; input.value = line.key;
-    input.checked = stillValid ? line.key === prevValue : i === 0;
+    input.type = "radio"; input.name = "fiveYearLine"; input.id = id; input.value = item.id;
+    input.checked = item.id === resolvedId;
     label.appendChild(input);
-    label.appendChild(document.createTextNode(line.label));
+    label.appendChild(document.createTextNode(item.label));
     container.appendChild(label);
+  });
+}
+
+// The "or choose an account / category" box below the top 7 P&L Summary
+// lines — the exact same full item list Account Trends builds (accounts,
+// Budget Categories, Merge As groups, Balance Sheet categories), reused
+// rather than recomputed, minus the P&L Summary group already covered by
+// the box above. Single-select (radio), same at-list/at-item/at-group-label
+// styling as Account Trends' own checklist, just radios instead of
+// checkboxes since 5-Year Trends only ever charts one line at a time.
+function populateFiveYearDetailPicker(items, resolvedId) {
+  const list = document.getElementById("fiveYearDetailPicker");
+  list.innerHTML = "";
+  let lastGroup = null;
+  items.forEach(item => {
+    if (item.group !== lastGroup) {
+      const gl = document.createElement("div");
+      gl.className = "at-group-label";
+      gl.textContent = item.group;
+      list.appendChild(gl);
+      lastGroup = item.group;
+    }
+    const row = document.createElement("label");
+    row.className = "at-item" + (item.id === resolvedId ? " checked" : "");
+    const input = document.createElement("input");
+    input.type = "radio"; input.name = "fiveYearDetailLine"; input.value = item.id;
+    input.checked = item.id === resolvedId;
+    const span = document.createElement("span");
+    span.textContent = item.label;
+    span.title = item.label;
+    row.appendChild(input);
+    row.appendChild(span);
+    list.appendChild(row);
   });
 }
 
@@ -6079,10 +6146,26 @@ function renderFiveYearLegend(containerId, years) {
   });
 }
 
-function renderFiveYearTrends(companies, summaryLines) {
-  populateFiveYearPicker(summaryLines);
-  const checked = document.querySelector('input[name="fiveYearLine"]:checked');
-  const line = summaryLines.find(l => l.key === (checked && checked.value)) || summaryLines[0];
+// Which single item (by buildAccountTrendItems id) is currently charted —
+// shared between the top 7-line box and the "or choose an account /
+// category" box below it, so selecting in either one is mutually exclusive
+// with the other (see populateFiveYearPicker's comment).
+let fiveYearActiveId = null;
+
+function renderFiveYearTrends(companies, summaryLines, budgetTree) {
+  const items = buildAccountTrendItems(companies, summaryLines, budgetTree);
+  const summaryItems = items.filter(it => it.group === "P&L Summary");
+  const detailItems = items.filter(it => it.group !== "P&L Summary");
+
+  const resolvedId = items.some(it => it.id === fiveYearActiveId)
+    ? fiveYearActiveId
+    : (summaryItems[0] && summaryItems[0].id);
+  fiveYearActiveId = resolvedId;
+
+  populateFiveYearPicker(summaryItems, resolvedId);
+  populateFiveYearDetailPicker(detailItems, resolvedId);
+
+  const line = items.find(it => it.id === resolvedId);
   if (!line) return;
 
   const endIdx = currentMonthIdx;
@@ -6155,11 +6238,27 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
   // most likely to want to read off directly rather than hover for.
   const labeledYearIdx = new Set([years.length - 2, years.length - 1].filter(i => i >= 0));
 
+  const priorLabelIdx = years.length - 2, currentLabelIdx = years.length - 1;
+
   groups.forEach((g, gi) => {
     const groupX = padL + gi * groupW + barGap / 2;
     svg.appendChild(textEl(padL + gi * groupW + groupW / 2, padT + chartH + 16, g.label, {
       "text-anchor": "middle", "font-size": "8.5", fill: "#8a93a0"
     }));
+
+    // Decide up front (before drawing either bar) whether the current-year
+    // and prior-year labels would collide -- their bars sit right next to
+    // each other, so when the two values are close the bars are nearly the
+    // same height and the labels land almost on top of one another. When
+    // that's the case, bump the current year's label further away from its
+    // bar so it reads above the prior year's instead of overlapping it.
+    const priorVal = priorLabelIdx >= 0 ? g.values[priorLabelIdx] : null;
+    const currentVal = g.values[currentLabelIdx];
+    let currentLabelBump = 0;
+    if (priorVal != null && currentVal != null && Math.abs(yAt(priorVal) - yAt(currentVal)) < 9) {
+      currentLabelBump = 9;
+    }
+
     g.values.forEach((val, yi) => {
       if (val == null) return;
       const x = groupX + yi * barW;
@@ -6176,7 +6275,8 @@ function renderGroupedBarChart(svg, tooltip, groups, years) {
         // Both labeled years sized down from the original 7.5 base (current
         // year 2px down, matching the prior year) to stop adjacent bar
         // labels from colliding.
-        const labelY = val >= 0 ? Math.max(padT + 7, y - 3) : Math.min(padT + chartH - 2, y + 9);
+        const bump = yi === currentLabelIdx ? currentLabelBump : 0;
+        const labelY = val >= 0 ? Math.max(padT + 7, y - 3 - bump) : Math.min(padT + chartH - 2, y + 9 + bump);
         svg.appendChild(textEl(x + barW / 2, labelY, fmtMoneyBare(val), {
           "text-anchor": "middle", "font-size": "5.5", "font-weight": "700", fill: "#3d4a5c"
         }));
@@ -6275,7 +6375,14 @@ document.querySelectorAll('input[name="accountChartMode"]').forEach(r => {
     render();
   });
 });
-document.getElementById("fiveYearLinePicker").addEventListener("change", render);
+document.getElementById("fiveYearLinePicker").addEventListener("change", e => {
+  fiveYearActiveId = e.target.value;
+  render();
+});
+document.getElementById("fiveYearDetailPicker").addEventListener("change", e => {
+  fiveYearActiveId = e.target.value;
+  render();
+});
 
 (function initFiveYearColorSchemeSelect() {
   const sel = document.getElementById("fiveYearColorSchemeSelect");
