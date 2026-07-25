@@ -4386,6 +4386,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   headRow.appendChild(th("Line Item", "label-col"));
+  headRow.appendChild(th("Last Month"));
   AVG_WINDOWS.forEach(w => headRow.appendChild(th(w.label)));
   headRow.appendChild(th("Budget"));
   headRow.appendChild(th("Annualized (×12)"));
@@ -4401,7 +4402,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   // immediately reflected anywhere else that reads it (e.g. the Compare/
   // History screens) without needing to switch tabs first.
   const rerender = () => render();
-  const blankExtraCells = () => AVG_WINDOWS.map(() => ({ text: "" })).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
+  const blankExtraCells = () => [{ text: "" }].concat(AVG_WINDOWS.map(() => ({ text: "" }))).concat([{ text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]);
 
   // Summary/derived rows (Revenue, Gross Profit, Total Debt Service, etc.) —
   // budget here is always a computed roll-up, never directly editable.
@@ -4409,7 +4410,11 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   // expandKey (e.g. a grand-total line).
   function addComputedRow(label, series, budgetVal, rowClass, expandKey, rowKey) {
     rowKey = rowKey || expandKey;
-    const cells = AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "N/A" : fmtWhole(v) }; });
+    // Last Month here is a rollup across multiple accounts, same as every
+    // other column on a computed row — never drillable, per the explicit
+    // "nothing else on that sheet" scope.
+    const cells = [{ text: fmtWhole(series[endIdx]) }];
+    cells.push(...AVG_WINDOWS.map(w => { const v = windowAvg(series, w.months); return { text: v == null ? "N/A" : fmtWhole(v) }; }));
     cells.push({ text: fmtWhole(budgetVal) });
     cells.push({ text: fmtWhole(budgetVal * 12) });
     const tr = buildRow(rowClass || "summary-line", labelWithHighlight(label, expandKey, rowKey, entVal), cells, expandKey);
@@ -4437,6 +4442,26 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     labelTd.className = "label-col";
     labelTd.innerHTML = labelWithHighlight(label, null, key, entVal);
     tr.appendChild(labelTd);
+    // Last Month is the one drillable column on this tab (per explicit
+    // scope: not the trailing averages, not Budget/Annualized). Only
+    // drillable when opts.account names a genuine single GL account —
+    // never for a merged/synthesized label — scoped to opts.company when
+    // given (loan/debt rows are per-company) or the tab's whole entity
+    // selection otherwise.
+    const lastMonthTd = document.createElement("td");
+    const lastMonthVal = series[endIdx];
+    lastMonthTd.textContent = fmtWhole(lastMonthVal);
+    if (typeof lastMonthVal === "number" && lastMonthVal < 0) lastMonthTd.classList.add("neg");
+    const drillCompanies = opts.company ? [opts.company] : companies;
+    if (opts.account && isDrillableAccountName(opts.account, drillCompanies)) {
+      lastMonthTd.classList.add("drill-cell");
+      lastMonthTd.title = "Click to see the transactions behind this figure";
+      lastMonthTd.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openStatementDrillDown({ kind: "account", account: opts.account, companies: drillCompanies, range: [endIdx, endIdx], label: months[endIdx].label });
+      });
+    }
+    tr.appendChild(lastMonthTd);
     AVG_WINDOWS.forEach(w => {
       const v = windowAvg(series, w.months);
       const td = document.createElement("td");
@@ -4571,7 +4596,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     plRows.forEach(r => {
       addInto(series, r.values);
       budget += budgetOf(expenseKey(r), r.values);
-      memberRows.push({ key: expenseKey(r), label: r.account, series: r.values, classifiable: true });
+      memberRows.push({ key: expenseKey(r), label: r.account, series: r.values, classifiable: true, account: r.account });
     });
     (loanRows || []).forEach(r => {
       const k = debtKeyFor(r);
@@ -4584,7 +4609,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
       const expenseSigned = r.values.map(v => -v);
       addInto(series, expenseSigned);
       budget += budgetOf(k, expenseSigned);
-      memberRows.push({ key: k, label: r.account + " — " + r.company + " (loan principal)", series: expenseSigned, classifiable: true });
+      memberRows.push({ key: k, label: r.account + " — " + r.company + " (loan principal)", series: expenseSigned, classifiable: true, account: r.account, company: r.company });
     });
     return { label, key, series, budget, memberRows };
   }
@@ -4646,14 +4671,14 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
         if (expandedKeys.has(fixedParent.key)) {
           fixedParent.subgroups.forEach(g => {
             addComputedRow(g.label, g.series, g.budget, "summary-line nested", g.key);
-            if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
+            if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable, account: r.account, company: r.company }));
           });
         }
       }
       [variableGroup, untaggedGroup].forEach(g => {
         if (!g.memberRows.length) return;
         addComputedRow(g.label, g.series, g.budget, "summary-line", g.key);
-        if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
+        if (expandedKeys.has(g.key)) g.memberRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable, account: r.account, company: r.company }));
       });
       return;
     }
@@ -4664,7 +4689,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
           const rowKey = typicalAccountKey("pl_" + sectionKey, r.account, null);
           const status = statusOf(rowKey);
           if (status === "removed" || status === "seasonal") return; // shown in their own section instead
-          addDetailRow(rowKey, r.account, r.values);
+          addDetailRow(rowKey, r.account, r.values, { account: r.account });
         });
       });
     }
@@ -4689,7 +4714,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   if (expandedKeys.has(debtKey)) {
     installment.forEach(r => {
       const key = typicalAccountKey("debt", r.account, r.company);
-      addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true });
+      addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true, account: r.account, company: r.company });
     });
   }
 
@@ -4710,7 +4735,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     if (expandedKeys.has(revKey)) {
       revolving.forEach(r => {
         const key = typicalAccountKey("debt", r.account, r.company);
-        addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true });
+        addDetailRow(key, r.account + " — " + r.company, r.values, { classifiable: true, account: r.account, company: r.company });
       });
     }
   }
@@ -4721,11 +4746,11 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
   const allAccountRows = [];
   PL_SECTION_KEYS.forEach(sectionKey => {
     sectionData[sectionKey].rows.forEach(r => {
-      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values, classifiable: true });
+      allAccountRows.push({ key: typicalAccountKey("pl_" + sectionKey, r.account, null), label: r.account + " (" + sectionDisplayLabel(sectionKey) + ")", series: r.values, classifiable: true, account: r.account });
     });
   });
   model.debt.rows.forEach(r => {
-    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values, classifiable: true });
+    allAccountRows.push({ key: typicalAccountKey("debt", r.account, r.company), label: r.account + " — " + r.company, series: r.values, classifiable: true, account: r.account, company: r.company });
   });
 
   const seasonalRows = allAccountRows.filter(r => statusOf(r.key) === "seasonal");
@@ -4739,7 +4764,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     seasonalRows.forEach(r => {
       addInto(seasonalSeries, r.series);
       seasonalBudget += budgetOf(r.key, r.series);
-      if (expandedKeys.has(seasonalKey)) addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable });
+      if (expandedKeys.has(seasonalKey)) addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable, account: r.account, company: r.company });
     });
     addComputedRow("Total Seasonal", seasonalSeries, seasonalBudget, "summary-line", null, "typ_totalSeasonal");
   }
@@ -4751,7 +4776,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     const headerRow = tbody.lastElementChild;
     headerRow.classList.add("expand-toggle");
     headerRow.dataset.key = removedKey;
-    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable }));
+    if (expandedKeys.has(removedKey)) removedRows.forEach(r => addDetailRow(r.key, r.label, r.series, { classifiable: r.classifiable, account: r.account, company: r.company }));
   }
 
   table.appendChild(tbody);
