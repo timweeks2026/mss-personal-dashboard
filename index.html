@@ -6157,9 +6157,12 @@ function renderFiveYearTrends(companies, summaryLines, budgetTree) {
   const summaryItems = items.filter(it => it.group === "P&L Summary");
   const detailItems = items.filter(it => it.group !== "P&L Summary");
 
+  // Default to Gross Profit rather than the first summary line (Revenue) so
+  // the tab loads with a chart that's meaningfully "there" on first view.
+  const defaultId = summaryItems.find(it => it.id === "summary::grossProfit") || summaryItems[0];
   const resolvedId = items.some(it => it.id === fiveYearActiveId)
     ? fiveYearActiveId
-    : (summaryItems[0] && summaryItems[0].id);
+    : (defaultId && defaultId.id);
   fiveYearActiveId = resolvedId;
 
   populateFiveYearPicker(summaryItems, resolvedId);
