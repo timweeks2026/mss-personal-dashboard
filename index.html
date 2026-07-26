@@ -1723,8 +1723,11 @@ function renderProfitPriorYearTable() {
   const tbody = document.createElement("tbody");
   let totalRevenue = 0, totalCost = 0, anyData = false;
 
-  profitData.clients.forEach(client => {
-    const t = clientTotals(client, indices);
+  const rows = profitData.clients
+    .map(client => ({ client, t: clientTotals(client, indices) }))
+    .sort((a, b) => (b.t.revenue ?? -Infinity) - (a.t.revenue ?? -Infinity));
+
+  rows.forEach(({ client, t }) => {
     if (t.revenue != null) { totalRevenue += t.revenue; anyData = true; }
     if (t.cost != null) totalCost += t.cost;
     const marginPct = t.revenue ? t.margin / t.revenue : null;
@@ -1861,9 +1864,11 @@ function renderProfitYtdTable() {
   const tbody = document.createElement("tbody");
   let totCurRev = 0, totPriRev = 0, totCurCost = 0, totPriCost = 0, totIntl = 0, totUs = 0, totLead = 0;
 
-  profitData.clients.forEach(client => {
-    const cur = clientTotals(client, curIndices);
-    const pri = clientTotals(client, priIndices);
+  const rows = profitData.clients
+    .map(client => ({ client, cur: clientTotals(client, curIndices), pri: clientTotals(client, priIndices) }))
+    .sort((a, b) => (b.cur.revenue ?? -Infinity) - (a.cur.revenue ?? -Infinity));
+
+  rows.forEach(({ client, cur, pri }) => {
     if (cur.revenue) { totCurRev += cur.revenue; totIntl += cur.intlCost; totUs += cur.usCost; totLead += cur.leadCost; }
     if (cur.cost) totCurCost += cur.cost;
     if (pri.revenue) totPriRev += pri.revenue;
