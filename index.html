@@ -508,6 +508,7 @@
   <button class="tab-btn" data-tab="recurring" type="button">Recurring Payments</button>
   <button class="tab-btn" data-tab="retireyear" type="button">Retirement Plan (Year)</button>
   <button class="tab-btn" data-tab="retire12" type="button">Retirement Plan (12-Year)</button>
+  <button class="tab-btn" data-tab="profitability" type="button">Client Profitability</button>
 </nav>
 
 <div id="statusRow">
@@ -822,6 +823,44 @@
       </div>
 
       <div class="table-wrap"><table id="retire12Table"></table></div>
+    </section>
+  </div>
+
+  <div id="panel-profitability" class="tab-panel" hidden>
+    <section>
+      <h2 class="section-title">Client Profitability</h2>
+      <div class="section-sub" id="profitSub"></div>
+      <div id="profitLoadErrors" class="empty-note" style="display:none; color:var(--bad);"></div>
+      <div id="profitNotConfigured" class="empty-note" style="display:none;"></div>
+      <div id="profitContent" style="display:none;">
+        <div id="profitDiagnostics" style="display:none;"></div>
+
+        <div class="section-sub" style="font-weight:600; color:var(--navy);">Prior Full Year (<span id="profitPriorYearLabel"></span>) — Month by Month. Click a client to expand.</div>
+        <div class="table-wrap"><table id="profitPriorYearTable"></table></div>
+
+        <div class="inline-control" style="margin-top:20px;">
+          <label for="profitYearSelect">Compare Year-to-Date</label>
+          <select id="profitYearSelect"></select>
+        </div>
+        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:6px;">Year-to-Date Comparison. Click a client to see cost by team member.</div>
+        <div class="table-wrap"><table id="profitYtdTable"></table></div>
+
+        <div class="chart-card" style="margin-top:20px;">
+          <div class="chart-card-head"><div class="chart-card-title">Revenue by Client — Trailing Months</div></div>
+          <div id="profitRevChartEmpty" class="empty-note" style="display:none;"></div>
+          <div class="chart-svg-wrap">
+            <svg id="profitRevChart"></svg>
+            <div class="chart-tooltip" id="profitRevChartTooltip"></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-head"><div class="chart-card-title">Firm-Wide Margin % / Labor % / Intl Labor % — Trailing Months</div></div>
+          <div class="chart-svg-wrap">
+            <svg id="profitPctChart"></svg>
+            <div class="chart-tooltip" id="profitPctChartTooltip"></div>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 </main>
@@ -1237,6 +1276,722 @@ function parseGLRows(text, opts) {
   }));
 }
 
+// ==================== Client Profitability: data sources ====================
+// Same published spreadsheet as CSV_URL/BS_CSV_URL/SOCF_CSV_URL above ("Data
+// (MSS+Personal)") -- five tabs built across recent sessions in the
+// Productivity Dashboard app, published to web as CSV the same way. Publish
+// each tab (File > Share > Publish to web > select sheet > CSV) and paste
+// its resulting URL below before this tab will show real data; until then
+// it renders an explicit "not configured" notice rather than erroring.
+const TEAM_RATES_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=452341877&single=true&output=csv";
+const FLAT_RATE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1501658412&single=true&output=csv";
+const CUSTOMER_MAPPING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1441845403&single=true&output=csv";
+const REVENUE_BY_CUSTOMER_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1010040923&single=true&output=csv";
+const HOURS_BY_CLIENT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=66708208&single=true&output=csv";
+
+let profitData = null; // built by buildProfitabilityModel(), null until loaded
+let profitLoadErrors = [];
+let profitSelectedYear = null; // drives the YTD comparison table
+const profitExpandedRows = new Set(); // separate from the page's global expandedKeys -- different table, different key space
+
+// ---- Parsing --------------------------------------------------------------
+
+// "29 Feb 2024" -- a different convention from parseMonthLabel's "Aug 21"
+// (that one is 3-letter-month + 2-digit-year for the P&L tabs; this is
+// day + 3-letter-month + 4-digit-year, the shape Revenue by Customer and
+// Hours by Client both use since they grow their month columns over time
+// rather than being rebuilt per calendar year).
+function parseWideMonthLabel(label) {
+  const parts = label.trim().split(/\s+/);
+  const monthNum = MONTH_NAMES.indexOf(parts[1]);
+  const year = parseInt(parts[2], 10);
+  return { label: label.trim(), year, monthNum };
+}
+
+function isExcludedRevenueRow(name) {
+  const n = name.trim().toLowerCase();
+  if (n === "" || n === "total" || n.startsWith("total ") || n.startsWith("fees - ")) return true;
+  // Per Tim (2026-07-26): QBO artifact / no-customer-assigned bucket, not a
+  // real client -- same treatment as the Fees row, not the Rob Mason row
+  // (which Tim confirmed IS a real client and should stay included).
+  if (n === "company vitals llc") return true;
+  return false;
+}
+
+// Revenue by Customer: rows 1-5 are QBO report metadata, row 6 (index 5) is
+// the month-header row (blank col A, then one date per month starting col
+// B), row 7+ is one row per QBO customer name.
+function parseRevenueByCustomer(text) {
+  const rows = parseCSV(text);
+  const header = rows[5] || [];
+  let monthEnd = 1;
+  while (monthEnd < header.length && header[monthEnd].trim() !== "") monthEnd++;
+  const labels = header.slice(1, monthEnd);
+  const customers = [];
+  for (let i = 6; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[0]) continue;
+    const name = r[0].trim();
+    if (isExcludedRevenueRow(name)) continue;
+    const values = [];
+    for (let m = 1; m < monthEnd; m++) values.push(parseNum(r[m]));
+    customers.push({ name, values });
+  }
+  return { labels, customers };
+}
+
+// Hours by Client: row 1 is a real header (Client | Team Member | Tier | Is
+// Client Lead | month columns...), no metadata rows -- this tab is fully
+// computed by Productivity Dashboard, not a pasted QBO export.
+function parseHoursByClient(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) return { labels: [], rows: [] };
+  const labels = rows[0].slice(4);
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[0] || !r[1]) continue;
+    const client = r[0].trim(), employee = r[1].trim();
+    const tier = (r[2] || "usTeam").trim();
+    const isLead = (r[3] || "").trim().toUpperCase() === "TRUE";
+    const values = labels.map((_, idx) => parseNum(r[4 + idx]));
+    out.push({ client, employee, tier, isLead, values });
+  }
+  return { labels, rows: out };
+}
+
+function parseTeamRates(text) {
+  const rows = parseCSV(text);
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[0]) continue;
+    const name = r[0].trim();
+    const begin = parseGLDate(r[1]);
+    const end = r[2] && r[2].trim() ? parseGLDate(r[2]) : null;
+    const loadedCost = parseNum(r[5]);
+    if (!name || !begin || !loadedCost) continue; // not yet filled in for this person
+    out.push({ name, begin, end, loadedCost });
+  }
+  return out;
+}
+
+function parseFlatRateAssignments(text) {
+  const rows = parseCSV(text);
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[0] || !r[1]) continue;
+    const member = r[0].trim(), client = r[1].trim();
+    const begin = parseGLDate(r[2]);
+    const end = r[3] && r[3].trim() ? parseGLDate(r[3]) : null;
+    const amount = parseNum(r[4]);
+    if (!begin || !amount) continue;
+    out.push({ member, client, begin, end, amount });
+  }
+  return out;
+}
+
+function parseCustomerMapping(text) {
+  const rows = parseCSV(text);
+  const map = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[0]) continue;
+    map.set(r[0].trim(), (r[1] || r[0]).trim());
+  }
+  return map;
+}
+
+// ---- Cost engine ------------------------------------------------------
+
+function ptKey(s) { return (s || "").trim().toLowerCase().replace(/\s+/g, " "); }
+
+function buildRateHistory(teamRatesRows) {
+  const map = new Map();
+  teamRatesRows.forEach(r => {
+    const key = ptKey(r.name);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ begin: r.begin, end: r.end, cost: r.loadedCost });
+  });
+  return map;
+}
+
+function buildFlatRateIndex(flatRows) {
+  const map = new Map();
+  flatRows.forEach(r => {
+    const key = ptKey(r.member) + "::" + ptKey(r.client);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ begin: r.begin, end: r.end, amount: r.amount });
+  });
+  return map;
+}
+
+// Picks the covering period for a given month's 1st-of-month date. If more
+// than one period covers it (overlapping Begin/End Dates -- a data-entry
+// mistake, not expected), the one with the latest Begin Date wins, and the
+// caller is expected to surface a data-quality note rather than average or
+// silently pick one with no explanation.
+function findCoveringPeriod(periods, monthStart) {
+  const covering = periods.filter(p => p.begin <= monthStart && (!p.end || p.end >= monthStart));
+  if (!covering.length) return null;
+  let overlapped = covering.length > 1;
+  const chosen = covering.reduce((a, b) => (b.begin > a.begin ? b : a));
+  return { period: chosen, overlapped };
+}
+
+// Returns { cost, source } where source is "flat" | "hourly" | "missing" (a
+// month someone logged hours in but no Team Rates row covers -- never
+// silently 0, since that would falsely inflate margin) | "none" (no hours,
+// no flat rate -- genuinely nothing that month).
+function costForMonth(employee, client, monthDate, hours, rateHistory, flatIndex) {
+  const flatPeriods = flatIndex.get(ptKey(employee) + "::" + ptKey(client));
+  if (flatPeriods) {
+    const found = findCoveringPeriod(flatPeriods, monthDate);
+    if (found) return { cost: found.period.amount, source: "flat", overlapped: found.overlapped };
+  }
+  const ratePeriods = rateHistory.get(ptKey(employee));
+  if (ratePeriods) {
+    const found = findCoveringPeriod(ratePeriods, monthDate);
+    if (found) return { cost: hours * found.period.cost, source: "hourly", overlapped: found.overlapped };
+  }
+  if (hours > 0) return { cost: null, source: "missing", overlapped: false };
+  return { cost: 0, source: "none", overlapped: false };
+}
+
+// ---- Model: unify month axes, aggregate revenue + cost per client ---------
+
+function buildUnifiedMonths(labelSets) {
+  const seen = new Map();
+  labelSets.forEach(labels => (labels || []).forEach(l => {
+    const pm = parseWideMonthLabel(l);
+    if (!pm.label || isNaN(pm.year) || pm.monthNum < 0) return;
+    const key = pm.year + "-" + pm.monthNum;
+    if (!seen.has(key)) seen.set(key, pm);
+  }));
+  return [...seen.values()].sort((a, b) => a.year - b.year || a.monthNum - b.monthNum);
+}
+
+function mapLabelsToUnified(sourceLabels, unified) {
+  const bySourceKey = new Map();
+  (sourceLabels || []).forEach((l, i) => {
+    const pm = parseWideMonthLabel(l);
+    bySourceKey.set(pm.year + "-" + pm.monthNum, i);
+  });
+  return unified.map(u => {
+    const key = u.year + "-" + u.monthNum;
+    return bySourceKey.has(key) ? bySourceKey.get(key) : -1;
+  });
+}
+
+function newClientEntry(name, n) {
+  return {
+    name,
+    revenue: new Array(n).fill(0),
+    cost: new Array(n).fill(0),
+    hasCostGap: false, // true if any month/member had a logged-hours month with no covering rate
+    hasOverlap: false, // true if any rate/flat period overlap was found (data-entry issue)
+    hasRevenue: false, // true if any real (nonzero) revenue landed on this client
+    hasHours: false, // true if any hours/flat-rate data landed on this client
+    members: new Map(), // employeeKey -> {name, tier, isLead, hours:[], cost:[]}
+  };
+}
+
+function buildProfitabilityModel(sources) {
+  const { teamRatesRows, flatRows, customerMap, revenue, hours } = sources;
+  const months = buildUnifiedMonths([revenue.labels, hours.labels]);
+  const n = months.length;
+  const revIdx = mapLabelsToUnified(revenue.labels, months);
+  const hrsIdx = mapLabelsToUnified(hours.labels, months);
+  const rateHistory = buildRateHistory(teamRatesRows);
+  const flatIndex = buildFlatRateIndex(flatRows);
+  const monthDates = months.map(m => new Date(m.year, m.monthNum, 1));
+
+  const clients = new Map(); // clientKey -> entry
+  function getClient(name) {
+    const key = ptKey(name);
+    if (!clients.has(key)) clients.set(key, newClientEntry(name, n));
+    return clients.get(key);
+  }
+
+  revenue.customers.forEach(row => {
+    const dashboardName = customerMap.get(row.name) || row.name;
+    const client = getClient(dashboardName);
+    for (let i = 0; i < n; i++) {
+      const src = revIdx[i];
+      if (src < 0) continue;
+      const v = row.values[src] || 0;
+      client.revenue[i] += v;
+      if (v) client.hasRevenue = true;
+    }
+  });
+
+  hours.rows.forEach(row => {
+    const client = getClient(row.client);
+    const empKey = ptKey(row.employee);
+    if (!client.members.has(empKey)) {
+      client.members.set(empKey, {
+        name: row.employee, tier: row.tier, isLead: row.isLead,
+        hours: new Array(n).fill(0), cost: new Array(n).fill(0), costSource: new Array(n).fill("none"),
+      });
+    }
+    const member = client.members.get(empKey);
+    member.isLead = member.isLead || row.isLead;
+    for (let i = 0; i < n; i++) {
+      const src = hrsIdx[i];
+      const h = src >= 0 ? (row.values[src] || 0) : 0;
+      member.hours[i] += h;
+      const result = costForMonth(row.employee, row.client, monthDates[i], h, rateHistory, flatIndex);
+      member.costSource[i] = result.source;
+      if (result.source === "missing") client.hasCostGap = true;
+      if (result.overlapped) client.hasOverlap = true;
+      if (result.cost) { member.cost[i] += result.cost; client.cost[i] += result.cost; client.hasHours = true; }
+      else if (h > 0 || result.source === "flat") client.hasHours = true;
+    }
+  });
+
+  const clientList = [...clients.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  // Cross-source diagnostics: a client with real cost activity but zero
+  // revenue ever, or vice versa -- usually means the Customer Mapping tab's
+  // "Dashboard Client" spelling doesn't match Productivity Dashboard's
+  // overall-client spelling (or the engagement genuinely has none yet).
+  const noRevenue = clientList.filter(c => c.hasHours && !c.hasRevenue).map(c => c.name);
+  const noHours = clientList.filter(c => c.hasRevenue && !c.hasHours).map(c => c.name);
+
+  const years = [...new Set(months.map(m => m.year))].sort();
+
+  return { months, clients: clientList, clientByKey: clients, years, diagnostics: { noRevenue, noHours } };
+}
+
+// ---- Fetch (own data domain -- never throws, matches fetchGLData's pattern) ----
+
+async function fetchOneProfitSource(url, label, parseFn, emptyValue) {
+  if (!url) {
+    profitLoadErrors.push({ label, message: "Not configured yet — publish this tab to web and add its CSV URL in index.html." });
+    return emptyValue;
+  }
+  try {
+    const text = await fetch(url + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    });
+    return parseFn(text);
+  } catch (err) {
+    profitLoadErrors.push({ label, message: err.message });
+    return emptyValue;
+  }
+}
+
+async function fetchProfitabilityData() {
+  profitLoadErrors = [];
+  const [teamRatesRows, flatRows, customerMap, revenue, hours] = await Promise.all([
+    fetchOneProfitSource(TEAM_RATES_CSV_URL, "Team Rates", parseTeamRates, []),
+    fetchOneProfitSource(FLAT_RATE_CSV_URL, "Flat-Rate Assignments", parseFlatRateAssignments, []),
+    fetchOneProfitSource(CUSTOMER_MAPPING_CSV_URL, "Customer Mapping", parseCustomerMapping, new Map()),
+    fetchOneProfitSource(REVENUE_BY_CUSTOMER_CSV_URL, "Revenue by Customer", parseRevenueByCustomer, { labels: [], customers: [] }),
+    fetchOneProfitSource(HOURS_BY_CLIENT_CSV_URL, "Hours by Client", parseHoursByClient, { labels: [], rows: [] }),
+  ]);
+  if (!revenue.customers.length && !hours.rows.length) { profitData = null; return; }
+  profitData = buildProfitabilityModel({ teamRatesRows, flatRows, customerMap, revenue, hours });
+  const thisYear = new Date().getFullYear();
+  if (!profitSelectedYear || !profitData.years.includes(profitSelectedYear)) {
+    profitSelectedYear = profitData.years.includes(thisYear) ? thisYear : profitData.years[profitData.years.length - 1];
+  }
+}
+
+// ---- Period helpers, scoped to profitData.months (a separate month axis from
+// the P&L tabs' own `months` global -- Revenue by Customer / Hours by Client
+// can cover a different date range) ----
+
+function profitMonthIndex(year, monthNum) {
+  return profitData.months.findIndex(m => m.year === year && m.monthNum === monthNum);
+}
+function profitSum(arr, indices) {
+  let sum = 0, any = false;
+  indices.forEach(i => { if (i >= 0) { sum += arr[i]; any = true; } });
+  return any ? sum : null;
+}
+function profitClosedMonthNum(year) {
+  const now = new Date();
+  if (year < now.getFullYear()) return 11;
+  if (year > now.getFullYear()) return -1;
+  return now.getMonth() - 1;
+}
+function profitYtdIndices(year, closedMonthNum) {
+  const out = [];
+  for (let m = 0; m <= closedMonthNum; m++) out.push(profitMonthIndex(year, m));
+  return out;
+}
+function profitYearIndices(year) {
+  const out = [];
+  for (let m = 0; m < 12; m++) out.push(profitMonthIndex(year, m));
+  return out;
+}
+function pctOf(numerator, denominator) {
+  if (denominator == null || !denominator) return null;
+  return numerator / denominator;
+}
+const TIER_DISPLAY = { leadership: "Leadership", opsLeadership: "Ops Leadership", usTeam: "US Team", international: "International" };
+const RATE_SOURCE_DISPLAY = { flat: "Flat rate", hourly: "Hourly", missing: "Rate missing", none: "—" };
+
+function clientTotals(client, indices) {
+  const revenue = profitSum(client.revenue, indices);
+  const cost = profitSum(client.cost, indices);
+  const margin = (revenue != null && cost != null) ? revenue - cost : null;
+  let intlCost = 0, usCost = 0, leadCost = 0;
+  client.members.forEach(m => {
+    const c = profitSum(m.cost, indices) || 0;
+    if (m.tier === "international") intlCost += c; else usCost += c;
+    if (m.isLead) leadCost += c;
+  });
+  return { revenue, cost, margin, intlCost, usCost, leadCost };
+}
+
+// Representative rate source for a member over a range of months: the most
+// recent month in range that actually had a source, so a client mid-transition
+// (e.g. moved from hourly to flat) shows their current arrangement, not a
+// meaningless mix.
+function representativeRateSource(member, indices) {
+  for (let i = indices.length - 1; i >= 0; i--) {
+    const idx = indices[i];
+    if (idx >= 0 && member.costSource[idx] !== "none") return member.costSource[idx];
+  }
+  return "none";
+}
+
+// ---- Render -------------------------------------------------------------
+
+function renderProfitabilityTab() {
+  const notConfigured = document.getElementById("profitNotConfigured");
+  const content = document.getElementById("profitContent");
+  const errorNote = document.getElementById("profitLoadErrors");
+
+  if (profitLoadErrors.length) {
+    errorNote.style.display = "";
+    errorNote.textContent = "Some sources didn't load: " + profitLoadErrors.map(e => `${e.label} (${e.message})`).join("; ");
+  } else {
+    errorNote.style.display = "none";
+  }
+
+  if (!profitData) {
+    notConfigured.style.display = "";
+    content.style.display = "none";
+    notConfigured.textContent = "No Client Profitability data yet — publish Revenue by Customer and Hours by Client to web (and Team Rates / Flat-Rate Assignments / Customer Mapping for cost detail), add their CSV URLs in index.html, and click \"Push hours to MSS\" at least once in Productivity Dashboard.";
+    return;
+  }
+  notConfigured.style.display = "none";
+  content.style.display = "";
+
+  document.getElementById("profitSub").textContent =
+    `${profitData.clients.length} client${profitData.clients.length === 1 ? "" : "s"} · ${profitData.months.length} month${profitData.months.length === 1 ? "" : "s"} of data available.`;
+
+  renderProfitDiagnostics();
+  renderProfitPriorYearTable();
+  renderProfitYearSelect();
+  renderProfitYtdTable();
+  renderProfitCharts();
+}
+
+function renderProfitDiagnostics() {
+  const el = document.getElementById("profitDiagnostics");
+  const { noRevenue, noHours } = profitData.diagnostics;
+  if (!noRevenue.length && !noHours.length) { el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  el.className = "empty-note";
+  const parts = [];
+  if (noRevenue.length) parts.push(`<div>Logged cost/hours but no matching revenue (check Customer Mapping's "Dashboard Client" spelling against these): ${noRevenue.map(escapeHtml).join(", ")}</div>`);
+  if (noHours.length) parts.push(`<div style="margin-top:6px;">Has revenue but no matching hours (check the Client spelling on Hours by Client / Project Mapping): ${noHours.map(escapeHtml).join(", ")}</div>`);
+  el.innerHTML = parts.join("");
+}
+
+function renderProfitPriorYearTable() {
+  const priorYear = new Date().getFullYear() - 1;
+  document.getElementById("profitPriorYearLabel").textContent = String(priorYear);
+  const indices = profitYearIndices(priorYear);
+  const table = document.getElementById("profitPriorYearTable");
+  table.innerHTML = "";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.appendChild(th("Client", "label-col"));
+  headRow.appendChild(th("Margin $"));
+  headRow.appendChild(th("Margin %"));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  let totalRevenue = 0, totalCost = 0, anyData = false;
+
+  profitData.clients.forEach(client => {
+    const t = clientTotals(client, indices);
+    if (t.revenue != null) { totalRevenue += t.revenue; anyData = true; }
+    if (t.cost != null) totalCost += t.cost;
+    const marginPct = t.revenue ? t.margin / t.revenue : null;
+    const key = "py::" + ptKey(client.name);
+    const cells = [{ text: fmtMoney(t.margin), grpStart: true }, { text: fmtPct(marginPct) }];
+    const label = client.name + (client.hasCostGap ? " †" : "");
+    const tr = buildRow("summary-line", labelWithChevron(label, key), cells, key);
+    tbody.appendChild(tr);
+    if (profitExpandedRows.has(key)) {
+      const detailTr = document.createElement("tr");
+      detailTr.className = "detail";
+      const td = document.createElement("td");
+      td.colSpan = 3;
+      td.appendChild(buildProfitMiniMonthlyTable(client, priorYear));
+      detailTr.appendChild(td);
+      tbody.appendChild(detailTr);
+    }
+  });
+
+  const totalMarginPct = totalRevenue ? (totalRevenue - totalCost) / totalRevenue : null;
+  const totalTr = buildRow("grandtotal", labelWithChevron("All Clients", null),
+    [{ text: fmtMoney(totalRevenue - totalCost), grpStart: true }, { text: fmtPct(totalMarginPct) }], null);
+  tbody.insertBefore(totalTr, tbody.firstChild);
+  table.appendChild(tbody);
+
+  if (!anyData) {
+    const emptyTr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 3;
+    td.className = "empty-note";
+    td.textContent = `No data yet for ${priorYear}.`;
+    emptyTr.appendChild(td);
+    tbody.appendChild(emptyTr);
+  }
+
+  tbody.querySelectorAll(".expand-toggle").forEach(elm => {
+    elm.addEventListener("click", () => {
+      const key = elm.dataset.key;
+      if (profitExpandedRows.has(key)) profitExpandedRows.delete(key); else profitExpandedRows.add(key);
+      renderProfitPriorYearTable();
+    });
+  });
+}
+
+function buildProfitMiniMonthlyTable(client, year) {
+  const t = document.createElement("table");
+  t.className = "mini-table";
+  t.style.cssText = "width:100%; border-collapse:collapse; font-size:12px;";
+  const head = document.createElement("tr");
+  head.appendChild(document.createElement("td"));
+  MONTH_NAMES.forEach(m => { const td = document.createElement("td"); td.textContent = m; td.style.cssText = "font-weight:600; padding:3px 6px;"; head.appendChild(td); });
+  t.appendChild(head);
+  ["Revenue", "Cost", "Margin"].forEach(label => {
+    const tr = document.createElement("tr");
+    const labelTd = document.createElement("td");
+    labelTd.textContent = label;
+    labelTd.style.cssText = "font-weight:600; padding:3px 6px;";
+    tr.appendChild(labelTd);
+    for (let m = 0; m < 12; m++) {
+      const idx = profitMonthIndex(year, m);
+      let v = null;
+      if (idx >= 0) {
+        if (label === "Revenue") v = client.revenue[idx];
+        else if (label === "Cost") v = client.cost[idx];
+        else v = client.revenue[idx] - client.cost[idx];
+      }
+      const td = document.createElement("td");
+      td.textContent = fmtMoney(v);
+      td.style.cssText = "padding:3px 6px; text-align:right;";
+      tr.appendChild(td);
+    }
+    t.appendChild(tr);
+  });
+  return t;
+}
+
+function renderProfitYearSelect() {
+  const sel = document.getElementById("profitYearSelect");
+  const candidates = [sel.value, String(profitSelectedYear)];
+  sel.innerHTML = "";
+  profitData.years.forEach(y => sel.appendChild(new Option(String(y), String(y))));
+  // Always resolve to a year actually present in profitData.years -- if
+  // profitSelectedYear is unset/stale (e.g. this renders before
+  // fetchProfitabilityData has ever set it), falling back to a raw
+  // assignment can leave the <select> with no matching option (value ""),
+  // which silently zeroes every downstream YTD number rather than erroring.
+  let matched = candidates.find(v => profitData.years.includes(Number(v)));
+  if (!matched) matched = String(profitData.years[profitData.years.length - 1]);
+  sel.value = matched;
+  profitSelectedYear = Number(matched);
+}
+
+function renderProfitYtdTable() {
+  const year = profitSelectedYear;
+  const closedMonthNum = profitClosedMonthNum(year);
+  const table = document.getElementById("profitYtdTable");
+  table.innerHTML = "";
+  if (closedMonthNum < 0) {
+    const caption = document.createElement("caption");
+    caption.className = "empty-note";
+    caption.textContent = `No closed months yet in ${year}.`;
+    table.appendChild(caption);
+    return;
+  }
+  const curIndices = profitYtdIndices(year, closedMonthNum);
+  const priIndices = profitYtdIndices(year - 1, closedMonthNum);
+  const monthLabel = MONTH_NAMES[closedMonthNum] + " " + year;
+
+  const thead = document.createElement("thead");
+  const grpRow = document.createElement("tr");
+  grpRow.className = "grp-head";
+  grpRow.appendChild(th("Client", "label-col"));
+  [["Revenue", 4], ["Cost", 4], ["Margin", 4]].forEach(([label, span]) => {
+    const c = th(label); c.colSpan = span; c.classList.add("grp-start"); grpRow.appendChild(c);
+  });
+  ["Labor %", "Intl Labor %", "US Labor %", "Lead %"].forEach(label => {
+    const c = th(label); c.classList.add("grp-start"); grpRow.appendChild(c);
+  });
+  thead.appendChild(grpRow);
+
+  const subRow = document.createElement("tr");
+  subRow.className = "sub-head";
+  subRow.appendChild(th("", "label-col"));
+  for (let i = 0; i < 3; i++) {
+    const c1 = th("YTD " + monthLabel); c1.classList.add("grp-start"); subRow.appendChild(c1);
+    subRow.appendChild(th("Prior-Year YTD"));
+    subRow.appendChild(th("Δ$"));
+    const c4 = th("Δ%"); c4.classList.add("narrow"); subRow.appendChild(c4);
+  }
+  for (let i = 0; i < 4; i++) subRow.appendChild(th(""));
+  thead.appendChild(subRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  let totCurRev = 0, totPriRev = 0, totCurCost = 0, totPriCost = 0, totIntl = 0, totUs = 0, totLead = 0;
+
+  profitData.clients.forEach(client => {
+    const cur = clientTotals(client, curIndices);
+    const pri = clientTotals(client, priIndices);
+    if (cur.revenue) { totCurRev += cur.revenue; totIntl += cur.intlCost; totUs += cur.usCost; totLead += cur.leadCost; }
+    if (cur.cost) totCurCost += cur.cost;
+    if (pri.revenue) totPriRev += pri.revenue;
+    if (pri.cost) totPriCost += pri.cost;
+
+    const key = "ytd::" + ptKey(client.name);
+    const cells = [
+      ...buildPeriodCells([{ current: cur.revenue, prior: pri.revenue }], "pos", false, null),
+      ...buildPeriodCells([{ current: cur.cost, prior: pri.cost }], "neg", false, null),
+      ...buildPeriodCells([{ current: cur.margin, prior: pri.margin }], "pos", false, null),
+      { text: fmtPct(pctOf(cur.cost, cur.revenue)), grpStart: true },
+      { text: fmtPct(pctOf(cur.intlCost, cur.revenue)) },
+      { text: fmtPct(pctOf(cur.usCost, cur.revenue)) },
+      { text: fmtPct(pctOf(cur.leadCost, cur.revenue)) },
+    ];
+    const label = client.name + (client.hasCostGap ? " †" : "");
+    const tr = buildRow("summary-line", labelWithChevron(label, key), cells, key);
+    tbody.appendChild(tr);
+    if (profitExpandedRows.has(key)) {
+      const detailTr = document.createElement("tr");
+      detailTr.className = "detail";
+      const td = document.createElement("td");
+      td.colSpan = cells.length + 1;
+      td.appendChild(buildProfitMemberTable(client, curIndices));
+      detailTr.appendChild(td);
+      tbody.appendChild(detailTr);
+    }
+  });
+
+  const totMargin = totCurRev - totCurCost, totPriMargin = totPriRev - totPriCost;
+  const totCells = [
+    ...buildPeriodCells([{ current: totCurRev, prior: totPriRev }], "pos", false, null),
+    ...buildPeriodCells([{ current: totCurCost, prior: totPriCost }], "neg", false, null),
+    ...buildPeriodCells([{ current: totMargin, prior: totPriMargin }], "pos", false, null),
+    { text: fmtPct(pctOf(totCurCost, totCurRev)), grpStart: true },
+    { text: fmtPct(pctOf(totIntl, totCurRev)) },
+    { text: fmtPct(pctOf(totUs, totCurRev)) },
+    { text: fmtPct(pctOf(totLead, totCurRev)) },
+  ];
+  const totalTr = buildRow("grandtotal", labelWithChevron("All Clients", null), totCells, null);
+  tbody.insertBefore(totalTr, tbody.firstChild);
+  table.appendChild(tbody);
+
+  tbody.querySelectorAll(".expand-toggle").forEach(elm => {
+    elm.addEventListener("click", () => {
+      const key = elm.dataset.key;
+      if (profitExpandedRows.has(key)) profitExpandedRows.delete(key); else profitExpandedRows.add(key);
+      renderProfitYtdTable();
+    });
+  });
+}
+
+function buildProfitMemberTable(client, indices) {
+  const t = document.createElement("table");
+  t.className = "mini-table";
+  t.style.cssText = "width:100%; border-collapse:collapse; font-size:12px;";
+  const head = document.createElement("tr");
+  ["Team Member", "Tier", "Hours", "Rate Source", "Cost", "% of Client Revenue"].forEach(l => {
+    const td = document.createElement("td");
+    td.textContent = l;
+    td.style.cssText = "font-weight:600; padding:3px 6px;";
+    head.appendChild(td);
+  });
+  t.appendChild(head);
+  const clientRevenue = profitSum(client.revenue, indices);
+  const rows = [...client.members.values()]
+    .map(m => ({ m, hrs: profitSum(m.hours, indices) || 0, cost: profitSum(m.cost, indices) || 0 }))
+    .sort((a, b) => b.cost - a.cost);
+  rows.forEach(({ m, hrs, cost }) => {
+    const tr = document.createElement("tr");
+    const source = RATE_SOURCE_DISPLAY[representativeRateSource(m, indices)] || "—";
+    [m.name + (m.isLead ? " (Lead)" : ""), TIER_DISPLAY[m.tier] || m.tier, hrs.toFixed(1), source, fmtMoney(cost), fmtPct(pctOf(cost, clientRevenue))]
+      .forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        td.style.cssText = "padding:3px 6px;" + (i >= 2 ? " text-align:right;" : "");
+        tr.appendChild(td);
+      });
+    t.appendChild(tr);
+  });
+  return t;
+}
+
+function renderProfitCharts() {
+  const n = profitData.months.length;
+  const endIdx = n - 1;
+  const startIdx = Math.max(0, endIdx - 24);
+  const windowLen = endIdx - startIdx + 1;
+  const emptyEl = document.getElementById("profitRevChartEmpty");
+  if (windowLen < 25) {
+    emptyEl.style.display = "";
+    emptyEl.textContent = `Not enough months yet for a full 25-month trend (${windowLen} available) — this fills in automatically as more months of Revenue by Customer and Hours by Client accumulate.`;
+  } else {
+    emptyEl.style.display = "none";
+  }
+  if (endIdx < 0) return;
+
+  const idxRange = [];
+  for (let i = startIdx; i <= endIdx; i++) idxRange.push(i);
+  const xLabels = idxRange.map(i => MONTH_NAMES[profitData.months[i].monthNum] + " " + String(profitData.months[i].year).slice(2));
+
+  const revenueTotalByClient = profitData.clients.map(c => ({ c, total: idxRange.reduce((s, idx) => s + c.revenue[idx], 0) }));
+  revenueTotalByClient.sort((a, b) => b.total - a.total);
+  const topClients = revenueTotalByClient.slice(0, 9).map(r => r.c);
+  const otherClients = profitData.clients.filter(c => !topClients.includes(c));
+
+  const palette = activeAccountTrendsPalette();
+  const revSeriesList = topClients.map((c, i) => ({ label: c.name, color: palette[i % palette.length], values: idxRange.map(idx => c.revenue[idx]) }));
+  if (otherClients.length) {
+    revSeriesList.push({ label: "Other", color: "#94a3b8", values: idxRange.map(idx => otherClients.reduce((s, c) => s + c.revenue[idx], 0)) });
+  }
+  renderStackedColumnChart(document.getElementById("profitRevChart"), document.getElementById("profitRevChartTooltip"), xLabels, revSeriesList, false);
+
+  const firmRevenue = idxRange.map(idx => profitData.clients.reduce((s, c) => s + c.revenue[idx], 0));
+  const firmCost = idxRange.map(idx => profitData.clients.reduce((s, c) => s + c.cost[idx], 0));
+  const firmIntl = idxRange.map(idx => profitData.clients.reduce((s, c) => {
+    let intl = 0;
+    c.members.forEach(m => { if (m.tier === "international") intl += (m.cost[idx] || 0); });
+    return s + intl;
+  }, 0));
+  const pctSeriesList = [
+    { label: "Margin %", color: "#16a34a", values: firmRevenue.map((r, i) => r ? (r - firmCost[i]) / r : null) },
+    { label: "Labor %", color: "#dc2626", values: firmRevenue.map((r, i) => r ? firmCost[i] / r : null) },
+    { label: "Intl Labor %", color: "#2563eb", values: firmRevenue.map((r, i) => r ? firmIntl[i] / r : null) },
+  ];
+  renderMultiLineChart(document.getElementById("profitPctChart"), document.getElementById("profitPctChartTooltip"), xLabels, pctSeriesList, true);
+}
+
 async function loadData() {
   const btn = document.getElementById("refreshBtn");
   btn.disabled = true;
@@ -1257,6 +2012,11 @@ async function loadData() {
   // every table render checks isRowHighlighted() synchronously, so this must
   // land before the first real render to avoid a flash of unhighlighted rows.
   fetchRowHighlights().then(render).catch(() => {});
+  // Client Profitability is also its own data domain (Revenue by Customer +
+  // Hours by Client + Team Rates + Flat-Rate Assignments + Customer Mapping,
+  // none of which are P&L Detail tabs) -- fetched/rendered independently so
+  // an unconfigured or slow-loading source here never blocks the P&L load.
+  fetchProfitabilityData().then(renderProfitabilityTab).catch(() => {});
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -6513,6 +7273,7 @@ function activateTab(name) {
   document.getElementById("panel-recurring").hidden = name !== "recurring";
   document.getElementById("panel-retireyear").hidden = name !== "retireyear";
   document.getElementById("panel-retire12").hidden = name !== "retire12";
+  document.getElementById("panel-profitability").hidden = name !== "profitability";
   document.getElementById("colorSchemeControl").hidden = name !== "fiveyear";
 }
 
@@ -6629,7 +7390,12 @@ document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
   r.addEventListener("change", () => {
     scaleMode = document.querySelector('input[name="scaleMode"]:checked').value;
     render();
+    if (profitData) renderProfitabilityTab();
   });
+});
+document.getElementById("profitYearSelect").addEventListener("change", () => {
+  profitSelectedYear = Number(document.getElementById("profitYearSelect").value);
+  renderProfitYtdTable();
 });
 document.getElementById("refreshBtn").addEventListener("click", loadData);
 
