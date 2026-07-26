@@ -1725,6 +1725,7 @@ function renderProfitPriorYearTable() {
 
   const rows = profitData.clients
     .map(client => ({ client, t: clientTotals(client, indices) }))
+    .filter(({ t }) => t.revenue || t.cost) // hide clients with no real activity this period
     .sort((a, b) => (b.t.revenue ?? -Infinity) - (a.t.revenue ?? -Infinity));
 
   rows.forEach(({ client, t }) => {
@@ -1866,6 +1867,7 @@ function renderProfitYtdTable() {
 
   const rows = profitData.clients
     .map(client => ({ client, cur: clientTotals(client, curIndices), pri: clientTotals(client, priIndices) }))
+    .filter(({ cur, pri }) => cur.revenue || cur.cost || pri.revenue || pri.cost) // hide clients with no real activity in either period
     .sort((a, b) => (b.cur.revenue ?? -Infinity) - (a.cur.revenue ?? -Infinity));
 
   rows.forEach(({ client, cur, pri }) => {
