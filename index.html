@@ -835,7 +835,10 @@
       <div id="profitContent" style="display:none;">
         <div id="profitDiagnostics" style="display:none;"></div>
 
-        <div class="section-sub" style="font-weight:600; color:var(--navy);">Year-to-Date Comparison, through the "Month in Review" selected above. Click a client to see cost by team member. "P&amp;L Net Margin (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
+        <div class="section-sub" style="font-weight:600; color:var(--navy);">This Month vs. the same month last year, for the "Month in Review" selected above. Click a client to see cost by team member. YTD Revenue/YTD Cost are reference totals through the same month. "P&amp;L Net Margin (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
+        <div class="table-wrap"><table id="profitMonthTable"></table></div>
+
+        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Year-to-Date Comparison, through the "Month in Review" selected above. Click a client to see cost by team member. "P&amp;L Net Margin (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
         <div class="table-wrap"><table id="profitYtdTable"></table></div>
 
         <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Trailing 12 Months ending <span id="profitPriorYearLabel"></span> — Month by Month. Click a client to expand.</div>
@@ -1667,6 +1670,7 @@ function renderProfitabilityTab() {
     `${profitData.clients.length} client${profitData.clients.length === 1 ? "" : "s"} · ${profitData.months.length} month${profitData.months.length === 1 ? "" : "s"} of data available.`;
 
   renderProfitDiagnostics();
+  renderProfitMonthTable();
   renderProfitYtdTable();
   renderProfitPriorYearTable();
   renderProfitCharts();
@@ -1880,6 +1884,149 @@ function buildProfitMiniMonthlyTable(client, calendarMonths) {
     t.appendChild(tr);
   });
   return t;
+}
+
+// Same shape/columns as renderProfitYtdTable, but "This Month" vs. the same
+// month last year instead of YTD -- plus two reference-only columns (YTD
+// Revenue, YTD Cost, no prior-year comparison) so the month-level detail and
+// the year-to-date context are both visible without switching tables.
+function renderProfitMonthTable() {
+  const table = document.getElementById("profitMonthTable");
+  table.innerHTML = "";
+  if (!monthLabels.length || currentMonthIdx < 0 || currentMonthIdx >= months.length) {
+    const caption = document.createElement("caption");
+    caption.className = "empty-note";
+    caption.textContent = "Waiting for data to load…";
+    table.appendChild(caption);
+    return;
+  }
+  const year = months[currentMonthIdx].year;
+  const monthNum = months[currentMonthIdx].monthNum;
+  const monthLabel = MONTH_NAMES[monthNum] + " " + year;
+  const curIndices = [profitMonthIndex(year, monthNum)];
+  const priIndices = [profitMonthIndex(year - 1, monthNum)];
+  const ytdIndices = profitYtdIndices(year, monthNum);
+
+  const thead = document.createElement("thead");
+  const grpRow = document.createElement("tr");
+  grpRow.className = "grp-head";
+  grpRow.appendChild(th("Client", "label-col"));
+  [["Revenue", 4], ["Cost", 4], ["Margin", 4]].forEach(([label, span]) => {
+    const c = th(label); c.colSpan = span; c.classList.add("grp-start"); grpRow.appendChild(c);
+  });
+  ["Labor %", "Intl Labor %", "US Labor %", "Lead %"].forEach(label => {
+    const c = th(label); c.classList.add("grp-start"); grpRow.appendChild(c);
+  });
+  ["YTD Revenue", "YTD Cost"].forEach(label => {
+    const c = th(label); c.classList.add("grp-start"); grpRow.appendChild(c);
+  });
+  thead.appendChild(grpRow);
+
+  const subRow = document.createElement("tr");
+  subRow.className = "sub-head";
+  subRow.appendChild(th("", "label-col"));
+  for (let i = 0; i < 3; i++) {
+    const c1 = th(monthLabel); c1.classList.add("grp-start"); subRow.appendChild(c1);
+    subRow.appendChild(th("Prior Year"));
+    subRow.appendChild(th("Δ$"));
+    const c4 = th("Δ%"); c4.classList.add("narrow"); subRow.appendChild(c4);
+  }
+  for (let i = 0; i < 4; i++) subRow.appendChild(th(""));
+  for (let i = 0; i < 2; i++) subRow.appendChild(th(""));
+  thead.appendChild(subRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  let totCurRev = 0, totPriRev = 0, totCurCost = 0, totPriCost = 0, totIntl = 0, totUs = 0, totLead = 0, totYtdRev = 0, totYtdCost = 0;
+
+  const rows = profitData.clients
+    .map(client => ({ client, cur: clientTotals(client, curIndices), pri: clientTotals(client, priIndices), ytd: clientTotals(client, ytdIndices) }))
+    .filter(({ cur, pri }) => cur.revenue || cur.cost || pri.revenue || pri.cost)
+    .sort((a, b) => (b.cur.revenue ?? -Infinity) - (a.cur.revenue ?? -Infinity));
+
+  rows.forEach(({ client, cur, pri, ytd }) => {
+    if (cur.revenue) { totCurRev += cur.revenue; totIntl += cur.intlCost; totUs += cur.usCost; totLead += cur.leadCost; }
+    if (cur.cost) totCurCost += cur.cost;
+    if (pri.revenue) totPriRev += pri.revenue;
+    if (pri.cost) totPriCost += pri.cost;
+    if (ytd.revenue) totYtdRev += ytd.revenue;
+    if (ytd.cost) totYtdCost += ytd.cost;
+
+    const key = "month::" + ptKey(client.name);
+    const cells = [
+      ...buildPeriodCells([{ current: cur.revenue, prior: pri.revenue }], "pos", false, null),
+      ...buildPeriodCells([{ current: cur.cost, prior: pri.cost }], "neg", false, null),
+      ...buildPeriodCells([{ current: cur.margin, prior: pri.margin }], "pos", false, null),
+      { text: fmtPct(pctOf(cur.cost, cur.revenue)), grpStart: true },
+      { text: fmtPct(pctOf(cur.intlCost, cur.revenue)) },
+      { text: fmtPct(pctOf(cur.usCost, cur.revenue)) },
+      { text: fmtPct(pctOf(cur.leadCost, cur.revenue)) },
+      { text: fmtMoney(ytd.revenue), grpStart: true },
+      { text: fmtMoney(ytd.cost) },
+    ];
+    const label = client.name + (client.hasCostGap ? " †" : "");
+    const tr = buildRow("summary-line", labelWithChevron(label, key), cells, key);
+    tbody.appendChild(tr);
+    if (profitExpandedRows.has(key)) {
+      const detailTr = document.createElement("tr");
+      detailTr.className = "detail";
+      const td = document.createElement("td");
+      td.colSpan = cells.length + 1;
+      td.appendChild(buildProfitMemberTable(client, curIndices));
+      detailTr.appendChild(td);
+      tbody.appendChild(detailTr);
+    }
+  });
+
+  const totMargin = totCurRev - totCurCost, totPriMargin = totPriRev - totPriCost;
+  const totCells = [
+    ...buildPeriodCells([{ current: totCurRev, prior: totPriRev }], "pos", false, null),
+    ...buildPeriodCells([{ current: totCurCost, prior: totPriCost }], "neg", false, null),
+    ...buildPeriodCells([{ current: totMargin, prior: totPriMargin }], "pos", false, null),
+    { text: fmtPct(pctOf(totCurCost, totCurRev)), grpStart: true },
+    { text: fmtPct(pctOf(totIntl, totCurRev)) },
+    { text: fmtPct(pctOf(totUs, totCurRev)) },
+    { text: fmtPct(pctOf(totLead, totCurRev)) },
+    { text: fmtMoney(totYtdRev), grpStart: true },
+    { text: fmtMoney(totYtdCost) },
+  ];
+  const totalTr = buildRow("grandtotal", labelWithChevron("All Clients", null), totCells, null);
+  tbody.insertBefore(totalTr, tbody.firstChild);
+
+  // P&L reconciliation, aligned under the same Margin columns (Revenue/Cost
+  // breakdown, the per-team-member % columns, and the YTD reference columns
+  // aren't meaningful from P&L accounts here, so those stay blank).
+  const pl = cfoConsultingPlSeries();
+  const plMarginCur = sumPlSeriesForCalendarMonths(pl.margin, [{ year, monthNum }]);
+  const plMarginPri = sumPlSeriesForCalendarMonths(pl.margin, [{ year: year - 1, monthNum }]);
+  const diffCur = plMarginCur != null ? totMargin - plMarginCur : null;
+  const diffPri = plMarginPri != null ? totPriMargin - plMarginPri : null;
+  const plCells = [
+    ...blankPeriodGroupCells(), ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: plMarginCur, prior: plMarginPri }], "pos", false, null),
+    ...blankPeriodGroupCells(),
+    { text: "—", grpStart: true }, { text: "—" },
+  ];
+  const diffCells = [
+    ...blankPeriodGroupCells(), ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: diffCur, prior: diffPri }], "pos", false, null),
+    ...blankPeriodGroupCells(),
+    { text: "—", grpStart: true }, { text: "—" },
+  ];
+  const plRow = buildRow("grandtotal", labelWithChevron("P&L Net Margin (CFO Consulting)", null), plCells, null);
+  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − P&L)", null), diffCells, null);
+  tbody.insertBefore(plRow, totalTr.nextSibling);
+  tbody.insertBefore(diffRow, plRow.nextSibling);
+
+  table.appendChild(tbody);
+
+  tbody.querySelectorAll(".expand-toggle").forEach(elm => {
+    elm.addEventListener("click", () => {
+      const key = elm.dataset.key;
+      if (profitExpandedRows.has(key)) profitExpandedRows.delete(key); else profitExpandedRows.add(key);
+      renderProfitMonthTable();
+    });
+  });
 }
 
 function renderProfitYtdTable() {
@@ -4229,12 +4376,12 @@ function render() {
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const monthVal = document.getElementById("monthSelect").value;
   currentMonthIdx = monthVal !== "" ? parseInt(monthVal, 10) : defaultMonthIndex();
-  // Client Profitability's YTD and TTM tables are anchored on the same
-  // "Month in Review" selector as every other tab (and the TTM table's P&L
-  // reconciliation also depends on the Entity selector) -- refresh both here
+  // Client Profitability's Month/YTD/TTM tables are anchored on the same
+  // "Month in Review" selector as every other tab (and each table's P&L
+  // reconciliation also depends on the Entity selector) -- refresh all here
   // so changing either actually updates them, independent of whether the
   // P&L data below has finished loading yet.
-  if (profitData) { renderProfitYtdTable(); renderProfitPriorYearTable(); }
+  if (profitData) { renderProfitMonthTable(); renderProfitYtdTable(); renderProfitPriorYearTable(); }
 
   const n = monthLabels.length;
   if (!n) {
