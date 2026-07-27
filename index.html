@@ -835,10 +835,10 @@
       <div id="profitContent" style="display:none;">
         <div id="profitDiagnostics" style="display:none;"></div>
 
-        <div class="section-sub" style="font-weight:600; color:var(--navy);">This Month vs. the same month last year, for the "Month in Review" selected above. Click a client to see cost by team member. YTD Revenue/YTD Cost are reference totals through the same month. "P&amp;L Net Margin (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
+        <div class="section-sub" style="font-weight:600; color:var(--navy);">This Month vs. the same month last year, for the "Month in Review" selected above. Click a client to see cost by team member. YTD Revenue/YTD Cost are reference totals through the same month. "QBO Total (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
         <div class="table-wrap"><table id="profitMonthTable"></table></div>
 
-        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Year-to-Date Comparison, through the "Month in Review" selected above. Click a client to see cost by team member. "P&amp;L Net Margin (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
+        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Year-to-Date Comparison, through the "Month in Review" selected above. Click a client to see cost by team member. "QBO Total (CFO Consulting)" and "Difference" rows are a gut-check against the P&amp;L's own CFO Consulting numbers (see Business Lines tab) -- not expected to match exactly since that's payroll-date-based, this is hours-worked-date-based.</div>
         <div class="table-wrap"><table id="profitYtdTable"></table></div>
 
         <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Trailing 12 Months ending <span id="profitPriorYearLabel"></span> — Month by Month. Click a client to expand.</div>
@@ -1722,17 +1722,17 @@ function plMonthIndexFor(year, monthNum) {
 // time, not match exactly in any given month.
 function cfoConsultingPlSeries() {
   const n = monthLabels.length;
-  if (!n) return { revenue: [], margin: [] };
+  if (!n) return { revenue: [], cost: [], margin: [] };
   const entVal = document.getElementById("entitySelect").value || "__CONSOLIDATED__";
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const revenue = buildBusinessLineGroup(BUSINESS_LINE_ACCOUNTS["CFO Consulting"].income, companies, currentMonthIdx).total;
-  const teamTechCost = zeros(n);
+  const cost = zeros(n);
   for (const rec of records) {
     if (rec.standardAccount !== "CFO Costs (Team & Technology)") continue;
     if (!companies.includes(rec.company)) continue;
-    addInto(teamTechCost, rec.values);
+    addInto(cost, rec.values);
   }
-  return { revenue, margin: subSeries(revenue, teamTechCost) };
+  return { revenue, cost, margin: subSeries(revenue, cost) };
 }
 
 // Sums a P&L-axis series (indexed by the shared `months` global) over a set
@@ -1821,9 +1821,9 @@ function renderProfitPriorYearTable() {
   const plRevenue = sumPlSeriesForCalendarMonths(pl.revenue, calendarMonths);
   const plMarginPct = plRevenue ? plMargin / plRevenue : null;
   const diff = (anyData && plMargin != null) ? (totalRevenue - totalCost) - plMargin : null;
-  const plRow = buildRow("grandtotal", labelWithChevron("P&L Net Margin (CFO Consulting)", null),
+  const plRow = buildRow("grandtotal", labelWithChevron("QBO Total (CFO Consulting)", null),
     [{ text: fmtMoney(plMargin), grpStart: true }, { text: fmtPct(plMarginPct) }], null);
-  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − P&L)", null),
+  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − QBO)", null),
     [{ text: fmtMoney(diff), grpStart: true }, { text: "—" }], null);
   tbody.insertBefore(plRow, totalTr.nextSibling);
   tbody.insertBefore(diffRow, plRow.nextSibling);
@@ -1993,28 +1993,45 @@ function renderProfitMonthTable() {
   const totalTr = buildRow("grandtotal", labelWithChevron("All Clients", null), totCells, null);
   tbody.insertBefore(totalTr, tbody.firstChild);
 
-  // P&L reconciliation, aligned under the same Margin columns (Revenue/Cost
-  // breakdown, the per-team-member % columns, and the YTD reference columns
-  // aren't meaningful from P&L accounts here, so those stay blank).
+  // QBO reconciliation, aligned under every column that has a real P&L
+  // equivalent (Revenue, Cost, Margin, and the YTD reference columns) --
+  // only the per-team-member % columns stay blank, since P&L accounts carry
+  // no team/tier breakdown.
   const pl = cfoConsultingPlSeries();
+  const plRevenueCur = sumPlSeriesForCalendarMonths(pl.revenue, [{ year, monthNum }]);
+  const plRevenuePri = sumPlSeriesForCalendarMonths(pl.revenue, [{ year: year - 1, monthNum }]);
+  const plCostCur = sumPlSeriesForCalendarMonths(pl.cost, [{ year, monthNum }]);
+  const plCostPri = sumPlSeriesForCalendarMonths(pl.cost, [{ year: year - 1, monthNum }]);
   const plMarginCur = sumPlSeriesForCalendarMonths(pl.margin, [{ year, monthNum }]);
   const plMarginPri = sumPlSeriesForCalendarMonths(pl.margin, [{ year: year - 1, monthNum }]);
+  const plYtdRevenue = sumPlSeriesForCalendarMonths(pl.revenue, calendarMonthsForYtd(year, monthNum));
+  const plYtdCost = sumPlSeriesForCalendarMonths(pl.cost, calendarMonthsForYtd(year, monthNum));
+
+  const diffRevCur = plRevenueCur != null ? totCurRev - plRevenueCur : null;
+  const diffRevPri = plRevenuePri != null ? totPriRev - plRevenuePri : null;
+  const diffCostCur = plCostCur != null ? totCurCost - plCostCur : null;
+  const diffCostPri = plCostPri != null ? totPriCost - plCostPri : null;
   const diffCur = plMarginCur != null ? totMargin - plMarginCur : null;
   const diffPri = plMarginPri != null ? totPriMargin - plMarginPri : null;
+  const diffYtdRevenue = plYtdRevenue != null ? totYtdRev - plYtdRevenue : null;
+  const diffYtdCost = plYtdCost != null ? totYtdCost - plYtdCost : null;
+
   const plCells = [
-    ...blankPeriodGroupCells(), ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: plRevenueCur, prior: plRevenuePri }], "pos", false, null),
+    ...buildPeriodCells([{ current: plCostCur, prior: plCostPri }], "neg", false, null),
     ...buildPeriodCells([{ current: plMarginCur, prior: plMarginPri }], "pos", false, null),
     ...blankPeriodGroupCells(),
-    { text: "—", grpStart: true }, { text: "—" },
+    { text: fmtMoney(plYtdRevenue), grpStart: true }, { text: fmtMoney(plYtdCost) },
   ];
   const diffCells = [
-    ...blankPeriodGroupCells(), ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: diffRevCur, prior: diffRevPri }], "pos", false, null),
+    ...buildPeriodCells([{ current: diffCostCur, prior: diffCostPri }], "neg", false, null),
     ...buildPeriodCells([{ current: diffCur, prior: diffPri }], "pos", false, null),
     ...blankPeriodGroupCells(),
-    { text: "—", grpStart: true }, { text: "—" },
+    { text: fmtMoney(diffYtdRevenue), grpStart: true }, { text: fmtMoney(diffYtdCost) },
   ];
-  const plRow = buildRow("grandtotal", labelWithChevron("P&L Net Margin (CFO Consulting)", null), plCells, null);
-  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − P&L)", null), diffCells, null);
+  const plRow = buildRow("grandtotal", labelWithChevron("QBO Total (CFO Consulting)", null), plCells, null);
+  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − QBO)", null), diffCells, null);
   tbody.insertBefore(plRow, totalTr.nextSibling);
   tbody.insertBefore(diffRow, plRow.nextSibling);
 
@@ -2124,31 +2141,41 @@ function renderProfitYtdTable() {
   const totalTr = buildRow("grandtotal", labelWithChevron("All Clients", null), totCells, null);
   tbody.insertBefore(totalTr, tbody.firstChild);
 
-  // P&L reconciliation, aligned under the same Revenue/Cost/Margin columns
-  // as every other row (Revenue/Cost breakdown and the per-team-member %
-  // columns aren't meaningful from P&L accounts, so those stay blank) --
-  // see cfoConsultingPlSeries() for what these figures mean.
+  // QBO reconciliation, aligned under every column that has a real P&L
+  // equivalent (Revenue, Cost, Margin) -- only the per-team-member % columns
+  // stay blank, since P&L accounts carry no team/tier breakdown. See
+  // cfoConsultingPlSeries() for what these figures mean.
   const pl = cfoConsultingPlSeries();
   const ytdCM = calendarMonthsForYtd(year, closedMonthNum);
   const priYtdCM = calendarMonthsForYtd(year - 1, closedMonthNum);
+  const plRevenueCur = sumPlSeriesForCalendarMonths(pl.revenue, ytdCM);
+  const plRevenuePri = sumPlSeriesForCalendarMonths(pl.revenue, priYtdCM);
+  const plCostCur = sumPlSeriesForCalendarMonths(pl.cost, ytdCM);
+  const plCostPri = sumPlSeriesForCalendarMonths(pl.cost, priYtdCM);
   const plMarginCur = sumPlSeriesForCalendarMonths(pl.margin, ytdCM);
   const plMarginPri = sumPlSeriesForCalendarMonths(pl.margin, priYtdCM);
+
+  const diffRevCur = plRevenueCur != null ? totCurRev - plRevenueCur : null;
+  const diffRevPri = plRevenuePri != null ? totPriRev - plRevenuePri : null;
+  const diffCostCur = plCostCur != null ? totCurCost - plCostCur : null;
+  const diffCostPri = plCostPri != null ? totPriCost - plCostPri : null;
   const diffCur = plMarginCur != null ? totMargin - plMarginCur : null;
   const diffPri = plMarginPri != null ? totPriMargin - plMarginPri : null;
+
   const plCells = [
-    ...blankPeriodGroupCells(),
-    ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: plRevenueCur, prior: plRevenuePri }], "pos", false, null),
+    ...buildPeriodCells([{ current: plCostCur, prior: plCostPri }], "neg", false, null),
     ...buildPeriodCells([{ current: plMarginCur, prior: plMarginPri }], "pos", false, null),
     ...blankPeriodGroupCells(),
   ];
   const diffCells = [
-    ...blankPeriodGroupCells(),
-    ...blankPeriodGroupCells(),
+    ...buildPeriodCells([{ current: diffRevCur, prior: diffRevPri }], "pos", false, null),
+    ...buildPeriodCells([{ current: diffCostCur, prior: diffCostPri }], "neg", false, null),
     ...buildPeriodCells([{ current: diffCur, prior: diffPri }], "pos", false, null),
     ...blankPeriodGroupCells(),
   ];
-  const plRow = buildRow("grandtotal", labelWithChevron("P&L Net Margin (CFO Consulting)", null), plCells, null);
-  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − P&L)", null), diffCells, null);
+  const plRow = buildRow("grandtotal", labelWithChevron("QBO Total (CFO Consulting)", null), plCells, null);
+  const diffRow = buildRow("grandtotal", labelWithChevron("Difference (Client Profitability − QBO)", null), diffCells, null);
   tbody.insertBefore(plRow, totalTr.nextSibling);
   tbody.insertBefore(diffRow, plRow.nextSibling);
 
