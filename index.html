@@ -838,11 +838,7 @@
         <div class="section-sub" style="font-weight:600; color:var(--navy);">Prior Full Year (<span id="profitPriorYearLabel"></span>) — Month by Month. Click a client to expand.</div>
         <div class="table-wrap"><table id="profitPriorYearTable"></table></div>
 
-        <div class="inline-control" style="margin-top:20px;">
-          <label for="profitYearSelect">Compare Year-to-Date</label>
-          <select id="profitYearSelect"></select>
-        </div>
-        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:6px;">Year-to-Date Comparison. Click a client to see cost by team member.</div>
+        <div class="section-sub" style="font-weight:600; color:var(--navy); margin-top:20px;">Year-to-Date Comparison, through the "Month in Review" selected above. Click a client to see cost by team member.</div>
         <div class="table-wrap"><table id="profitYtdTable"></table></div>
 
         <div class="chart-card" style="margin-top:20px;">
@@ -1291,7 +1287,6 @@ const HOURS_BY_CLIENT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-
 
 let profitData = null; // built by buildProfitabilityModel(), null until loaded
 let profitLoadErrors = [];
-let profitSelectedYear = null; // drives the YTD comparison table
 const profitExpandedRows = new Set(); // separate from the page's global expandedKeys -- different table, different key space
 
 // ---- Parsing --------------------------------------------------------------
@@ -1594,10 +1589,6 @@ async function fetchProfitabilityData() {
   ]);
   if (!revenue.customers.length && !hours.rows.length) { profitData = null; return; }
   profitData = buildProfitabilityModel({ teamRatesRows, flatRows, customerMap, revenue, hours });
-  const thisYear = new Date().getFullYear();
-  if (!profitSelectedYear || !profitData.years.includes(profitSelectedYear)) {
-    profitSelectedYear = profitData.years.includes(thisYear) ? thisYear : profitData.years[profitData.years.length - 1];
-  }
 }
 
 // ---- Period helpers, scoped to profitData.months (a separate month axis from
@@ -1611,12 +1602,6 @@ function profitSum(arr, indices) {
   let sum = 0, any = false;
   indices.forEach(i => { if (i >= 0) { sum += arr[i]; any = true; } });
   return any ? sum : null;
-}
-function profitClosedMonthNum(year) {
-  const now = new Date();
-  if (year < now.getFullYear()) return 11;
-  if (year > now.getFullYear()) return -1;
-  return now.getMonth() - 1;
 }
 function profitYtdIndices(year, closedMonthNum) {
   const out = [];
@@ -1688,7 +1673,6 @@ function renderProfitabilityTab() {
 
   renderProfitDiagnostics();
   renderProfitPriorYearTable();
-  renderProfitYearSelect();
   renderProfitYtdTable();
   renderProfitCharts();
 }
@@ -1805,34 +1789,21 @@ function buildProfitMiniMonthlyTable(client, year) {
   return t;
 }
 
-function renderProfitYearSelect() {
-  const sel = document.getElementById("profitYearSelect");
-  const candidates = [sel.value, String(profitSelectedYear)];
-  sel.innerHTML = "";
-  profitData.years.forEach(y => sel.appendChild(new Option(String(y), String(y))));
-  // Always resolve to a year actually present in profitData.years -- if
-  // profitSelectedYear is unset/stale (e.g. this renders before
-  // fetchProfitabilityData has ever set it), falling back to a raw
-  // assignment can leave the <select> with no matching option (value ""),
-  // which silently zeroes every downstream YTD number rather than erroring.
-  let matched = candidates.find(v => profitData.years.includes(Number(v)));
-  if (!matched) matched = String(profitData.years[profitData.years.length - 1]);
-  sel.value = matched;
-  profitSelectedYear = Number(matched);
-}
-
 function renderProfitYtdTable() {
-  const year = profitSelectedYear;
-  const closedMonthNum = profitClosedMonthNum(year);
   const table = document.getElementById("profitYtdTable");
   table.innerHTML = "";
-  if (closedMonthNum < 0) {
+  // Anchored on the same "Month in Review" selector every other tab uses
+  // (months[currentMonthIdx]), not an independent picker -- so changing that
+  // dropdown updates this table exactly like it does everywhere else.
+  if (!monthLabels.length || currentMonthIdx < 0 || currentMonthIdx >= months.length) {
     const caption = document.createElement("caption");
     caption.className = "empty-note";
-    caption.textContent = `No closed months yet in ${year}.`;
+    caption.textContent = "Waiting for data to load…";
     table.appendChild(caption);
     return;
   }
+  const year = months[currentMonthIdx].year;
+  const closedMonthNum = months[currentMonthIdx].monthNum;
   const curIndices = profitYtdIndices(year, closedMonthNum);
   const priIndices = profitYtdIndices(year - 1, closedMonthNum);
   const monthLabel = MONTH_NAMES[closedMonthNum] + " " + year;
@@ -4136,6 +4107,11 @@ function render() {
   const companies = entVal === "__CONSOLIDATED__" ? entityGroups.consolidated : [entVal];
   const monthVal = document.getElementById("monthSelect").value;
   currentMonthIdx = monthVal !== "" ? parseInt(monthVal, 10) : defaultMonthIndex();
+  // Client Profitability's YTD table is anchored on the same "Month in
+  // Review" selector as every other tab -- refresh it here so picking a
+  // different month actually changes it, independent of whether the P&L
+  // data below has finished loading yet.
+  if (profitData) renderProfitYtdTable();
 
   const n = monthLabels.length;
   if (!n) {
@@ -7399,10 +7375,6 @@ document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
     render();
     if (profitData) renderProfitabilityTab();
   });
-});
-document.getElementById("profitYearSelect").addEventListener("change", () => {
-  profitSelectedYear = Number(document.getElementById("profitYearSelect").value);
-  renderProfitYtdTable();
 });
 document.getElementById("refreshBtn").addEventListener("click", loadData);
 
