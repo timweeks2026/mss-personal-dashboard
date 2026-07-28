@@ -154,19 +154,27 @@
   /* Rolls the body up/down in place (header bar stays put, showing the
      panel is still "there") rather than closing the whole thing -- the
      circular backdrop + rotation is the "cool graphic" for what's
-     otherwise just a plain caret. The separate ✕ next to it fully closes
-     the drawer (same as the header's own "Meeting Agenda" toggle button) --
-     both affordances are offered side by side since some users want a
-     quick roll-up mid-scroll and others want it fully gone. */
-  .agenda-collapse-btn, .agenda-close-btn {
+     otherwise just a plain caret. The separate ✕ fully closes the drawer
+     (same as the header's own "Meeting Agenda" toggle button). Deliberately
+     NOT styled as a twin of the collapse button (square vs. circle, red
+     hover vs. neutral, extra left margin) -- two adjacent same-shaped
+     26x26 buttons were too easy to misclick, so shape/color now carries
+     the distinction, not just the glyph. */
+  .agenda-collapse-btn {
     background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.4); color: #fff;
     font-size: 15px; line-height: 1; width: 26px; height: 26px; border-radius: 50%;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     transition: transform 0.25s ease, background 0.15s ease;
   }
-  .agenda-close-btn { font-size: 13px; }
-  .agenda-collapse-btn:hover, .agenda-close-btn:hover { background: rgba(255,255,255,0.32); }
+  .agenda-collapse-btn:hover { background: rgba(255,255,255,0.32); }
   #agendaDrawer.collapsed .agenda-collapse-btn { transform: rotate(180deg); }
+  .agenda-close-btn {
+    background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.4); color: #fff;
+    font-size: 13px; line-height: 1; width: 26px; height: 26px; border-radius: 6px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    margin-left: 10px; transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .agenda-close-btn:hover { background: #e85c4a; border-color: #e85c4a; }
   .agenda-drawer-body {
     padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto;
     max-height: 2000px; opacity: 1; transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
