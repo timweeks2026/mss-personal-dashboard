@@ -81,12 +81,18 @@
   select.row-select { font-size: 11.5px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; }
   input.merge-input { font-size: 11.5px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; width: 90px; }
 
-  /* ---- Meeting Agenda drawer: lives inside #stickyTop (below the header,
-     above the tab nav), so opening/closing it is picked up by the same
-     updateStickyTopHeight() logic every table's sticky thead already
-     depends on -- it grows/shrinks the sticky region rather than floating
-     over the page, which is what keeps it "always available" without
-     needing its own fixed-position/z-index bookkeeping. ---- */
+  /* ---- Meeting Agenda drawer: a floating panel (position: fixed), not part
+     of the page's normal document flow -- it hovers over the report rather
+     than pushing content down, so the main page stays fully scrollable and
+     clickable underneath while it's open. Docked top-right, right below the
+     real sticky header region: `top` reuses --sticky-top-h (already
+     maintained by updateStickyTopHeight() for the table sticky-header
+     feature), which now always reflects header+nav+status only, since a
+     fixed-position element never contributes to its normal-flow parent's
+     measured height -- no extra bookkeeping needed for that part. z-index
+     40 keeps it above ordinary page content but below the drill-down/
+     history modals (z-index 50), so opening one of those from underneath
+     still reads on top. ---- */
   button#agendaToggleBtn {
     font-size: 13px; padding: 9px 14px; border-radius: 6px;
     border: 1px solid #4a6a90; background: var(--navy-light); color: #fff; cursor: pointer;
@@ -94,8 +100,11 @@
   button#agendaToggleBtn:hover { background: #1d4670; }
   button#agendaToggleBtn.active { background: var(--accent); border-color: var(--accent); }
   #agendaDrawer {
-    background: #fff; border-bottom: 2px solid var(--accent); padding: 14px 28px 18px;
-    max-height: 65vh; overflow-y: auto; box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+    position: fixed; top: var(--sticky-top-h, 90px); right: 24px; z-index: 40;
+    width: 460px; max-width: calc(100vw - 48px);
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px 18px; max-height: calc(100vh - var(--sticky-top-h, 90px) - 20px);
+    overflow-y: auto; box-shadow: 0 8px 28px rgba(20,30,45,0.22);
   }
   .agenda-drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .agenda-drawer-head h2 { font-size: 15px; color: var(--navy); margin: 0; }
@@ -8090,12 +8099,10 @@ document.getElementById("agendaToggleBtn").addEventListener("click", () => {
   const drawer = document.getElementById("agendaDrawer");
   drawer.hidden = !drawer.hidden;
   document.getElementById("agendaToggleBtn").classList.toggle("active", !drawer.hidden);
-  updateStickyTopHeight();
 });
 document.getElementById("agendaCloseBtn").addEventListener("click", () => {
   document.getElementById("agendaDrawer").hidden = true;
   document.getElementById("agendaToggleBtn").classList.remove("active");
-  updateStickyTopHeight();
 });
 document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
 document.getElementById("agendaGeneratePunchBtn").addEventListener("click", generateAgendaPunchList);
