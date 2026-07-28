@@ -408,7 +408,7 @@
   .card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
   @media (max-width: 1000px) { .card-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .card-grid { grid-template-columns: 1fr; } }
-  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
+  .card { position: relative; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(20,30,45,0.05); }
   .card .card-title { font-size: 12.5px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.3px; }
   .card .card-value { font-size: 22px; font-weight: 800; margin-top: 4px; }
   .card .card-margin { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
@@ -416,6 +416,57 @@
      user's framing, same treatment as every sibling dashboard in this family. */
   .card.emphasis { border-left: 4px solid var(--accent); }
   .card.emphasis .card-value { font-size: 26px; color: var(--accent); }
+
+  /* ---- Key Insights pin buttons ---------------------------------------
+     Reused on P&L cards (container: .card, already position:relative above)
+     and P&L Statement detail-row labels (container: td.label-col, already
+     position:sticky — a valid positioning context too). Hidden until the
+     container is hovered so it doesn't clutter the card grid or the
+     statement table by default. */
+  .pin-btn {
+    position: absolute; top: 6px; right: 6px; z-index: 1;
+    width: 22px; height: 22px; padding: 0; font-size: 12px; line-height: 1;
+    border-radius: 5px; border: 1px solid var(--border); background: #fff;
+    cursor: pointer; opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+  }
+  .card:hover .pin-btn, tr:hover .pin-btn { opacity: 1; }
+  .pin-btn:hover { background: #eaf1fb; }
+  /* No extra positioning rule needed for td.label-col — its existing
+     `position: sticky` (see the Statement-table CSS block below) already
+     establishes a valid containing block for this absolutely-positioned
+     button, exactly like `relative` would. Adding one here would have
+     landed AFTER that block in source order and silently overridden
+     sticky with relative for every label cell in every table — the same
+     class of cascade bug already caught once this session for
+     .color-scheme-control[hidden]. */
+
+  /* ---- Key Insights board ---------------------------------------------
+     Ordered grid of pinned tiles — deliberately NOT a free-form canvas,
+     see the plan's "ordered grid/list" decision. Chart tiles span 2
+     columns so axis labels stay legible at any grid width; .insight-tile
+     itself needs no visual styling of its own (the reused .card inside it
+     already supplies border/background/shadow) beyond position:relative
+     as a home for the ▲▼✕ controls. */
+  .insight-board-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+  .insight-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 1000px) { .insight-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .insight-grid { grid-template-columns: 1fr; } }
+  .insight-tile { position: relative; }
+  .insight-tile.chart-tile { grid-column: span 2; }
+  @media (max-width: 700px) { .insight-tile.chart-tile { grid-column: span 1; } }
+  .insight-tile-controls { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; z-index: 1; }
+  .insight-tile .card { padding-top: 32px; }
+  .insight-placeholder { color: var(--muted); font-style: italic; }
+  .insight-chart .chart-card { margin-top: 10px; }
+  .insight-chart .chart-card:first-of-type { margin-top: 14px; }
+
+  /* Present mode: hides nav/status chrome and enlarges tiles for screen-
+     sharing, toggled by #presentModeBtn — session-only, not persisted. */
+  body.presenting .tabs, body.presenting #statusRow { display: none; }
+  body.presenting .insight-grid { grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  @media (max-width: 700px) { body.presenting .insight-grid { grid-template-columns: 1fr; } }
+  body.presenting .insight-tile .card-value { font-size: 32px; }
+  body.presenting .insight-tile .card-title { font-size: 14px; }
 
   .chip-row-caption { font-size: 10.5px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
   .chip-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -704,6 +755,7 @@
 
 <nav class="tabs">
   <button class="tab-btn active" data-tab="statement" type="button">P&amp;L Statement</button>
+  <button class="tab-btn" data-tab="insights" type="button">Key Insights</button>
   <button class="tab-btn" data-tab="analysis" type="button">Changes Analysis</button>
   <button class="tab-btn" data-tab="charts" type="button">Account Trends</button>
   <button class="tab-btn" data-tab="fiveyear" type="button">5-Year Trends</button>
@@ -803,6 +855,10 @@
                 <label><input type="radio" name="accountChartMode" value="stacked"> Stacked Columns</label>
               </div>
             </div>
+            <div class="inline-control">
+              <label>&nbsp;</label>
+              <button type="button" class="btn-secondary" id="atPinChartBtn">📌 Pin this chart</button>
+            </div>
           </div>
           <div id="chartsEmpty" class="empty-note" style="display:none;">Check one or more accounts on the left to see their trend.</div>
           <div id="chartsContent">
@@ -845,6 +901,7 @@
         </div>
         <div class="fiveyear-charts" id="fiveYearContent">
         <div class="section-sub" id="fiveYearHeading" style="font-weight:600; color:var(--navy);"></div>
+        <button type="button" class="btn-secondary" id="fyPinChartBtn" style="margin-bottom:10px;">📌 Pin this chart</button>
         <div class="chart-card compact">
           <div class="chart-card-head">
             <div class="chart-card-title">By Month</div>
@@ -1068,6 +1125,20 @@
           </div>
         </div>
       </div>
+    </section>
+  </div>
+
+  <div id="panel-insights" class="tab-panel" hidden>
+    <section>
+      <div class="insight-board-head">
+        <div>
+          <h2 class="section-title">Key Insights</h2>
+          <div class="section-sub">Pinned cards, line items, and charts from anywhere in the dashboard — always live, showing whatever Entity/Month is currently selected above. Look for the 📌 button on a card or account row, or "Pin this chart" on Account Trends / 5-Year Trends.</div>
+        </div>
+        <button type="button" class="btn-secondary" id="presentModeBtn">🖥 Present</button>
+      </div>
+      <div id="insightsEmpty" class="empty-note">Nothing pinned yet — pin a card, line item, or chart from another tab to build your meeting summary here.</div>
+      <div id="insightsBoard" class="insight-grid" style="display:none;"></div>
     </section>
   </div>
 </main>
@@ -2503,6 +2574,10 @@ async function loadData() {
   // is always visible in the header regardless of which tab/data-load state
   // the rest of the page is in.
   fetchMeetingAgendaData();
+  // Key Insights board is a fourth data domain (own Redis key) -- re-render
+  // once it arrives so pinned tiles appear without needing a manual refresh
+  // if this resolves after the first P&L render already happened.
+  fetchInsightsBoardData().then(render).catch(() => {});
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -3978,6 +4053,284 @@ function renderAgendaHistory() {
   });
 }
 
+// ---- Key Insights board -------------------------------------------------
+// A live "pin board" for meetings: a pinned tile stores just enough of a
+// reference (which card, which account/section, which chart config) to be
+// re-derived from whatever render() just computed -- never a frozen number.
+// That's what makes it "live": renderInsightsBoard() is called from inside
+// render() itself (see the end of that function) with the exact same
+// summaryLines/sectionData/etc. every other tab just got, so a tile can
+// never show a stale figure relative to the rest of the dashboard. Own
+// Redis-backed data domain (api/insights-board.js), same "one mutable
+// document" pattern as meetingAgendaData, just a flat array (current board
+// state, not a meeting-by-meeting log).
+let insightsBoardData = null;
+let insightsBoardLoaded = false;
+let insightsBoardSaveTimer = null;
+
+function defaultInsightsBoardData() { return { tiles: [] }; }
+
+async function fetchInsightsBoardData() {
+  try {
+    const resp = await fetch("/api/insights-board", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const server = await resp.json();
+    insightsBoardData = (server && Array.isArray(server.tiles)) ? server : defaultInsightsBoardData();
+  } catch (err) {
+    console.warn("Couldn't load Key Insights board data: " + err.message);
+    insightsBoardData = defaultInsightsBoardData();
+  }
+  insightsBoardLoaded = true;
+}
+
+function saveInsightsBoardData() {
+  clearTimeout(insightsBoardSaveTimer);
+  insightsBoardSaveTimer = setTimeout(() => {
+    fetch("/api/insights-board", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: insightsBoardData })
+    }).catch(err => console.warn("Couldn't save Key Insights board data: " + err.message));
+  }, 500);
+}
+
+function insightPinId() { return "pin_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8); }
+
+// Shared by every "📌 Pin" button (cards, line items, charts) -- appends a
+// tile at the end of the current order and triggers a full render() so the
+// new tile shows up immediately using this exact moment's live data.
+function addInsightPin(pin) {
+  if (!insightsBoardData) insightsBoardData = defaultInsightsBoardData();
+  const maxOrder = insightsBoardData.tiles.reduce((m, t) => Math.max(m, t.order), -1);
+  insightsBoardData.tiles.push(Object.assign(
+    { id: insightPinId(), order: maxOrder + 1, pinnedAt: new Date().toISOString() },
+    pin
+  ));
+  saveInsightsBoardData();
+  render();
+}
+
+function removeInsightPin(id) {
+  insightsBoardData.tiles = insightsBoardData.tiles.filter(t => t.id !== id);
+  saveInsightsBoardData();
+  render();
+}
+
+// dir is -1 (up) or +1 (down); swaps this tile's `order` with its neighbor
+// in display order rather than reassigning every tile's order, so unrelated
+// tiles' order values are left untouched.
+function moveInsightPin(id, dir) {
+  const sorted = insightsBoardData.tiles.slice().sort((a, b) => a.order - b.order);
+  const idx = sorted.findIndex(t => t.id === id);
+  const swapIdx = idx + dir;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return;
+  const tmp = sorted[idx].order;
+  sorted[idx].order = sorted[swapIdx].order;
+  sorted[swapIdx].order = tmp;
+  saveInsightsBoardData();
+  render();
+}
+
+// A muted "this tile doesn't currently resolve" card — used whenever a
+// pinned account/chart no longer matches anything under the current
+// Entity/Month (zero-activity pruning, entity switch, a renamed account).
+// The pin itself is left in the board rather than auto-removed: switching
+// back to the right Entity/Month should make it valid again.
+function buildInsightPlaceholder(message) {
+  const wrap = document.createElement("div");
+  wrap.className = "card insight-placeholder";
+  wrap.innerHTML = `<div class="card-margin">${escapeHtml(message)}</div>`;
+  return wrap;
+}
+
+function buildCardTile(tile, summaryLines) {
+  const byKey = new Map(summaryLines.map(l => [l.key, l]));
+  // "grossMargin" is a special case everywhere in this file — it's injected
+  // into the card grid right after "grossProfit", not a real CARD_ORDER/
+  // summaryLines key of its own (see renderCards).
+  if (tile.cardKey === "grossMargin") {
+    const gp = byKey.get("grossProfit");
+    return gp ? buildGrossMarginCard(gp) : buildInsightPlaceholder("Gross Margin (%) — no data available.");
+  }
+  const line = byKey.get(tile.cardKey);
+  return line ? buildCardDom(line) : buildInsightPlaceholder("This card is no longer available.");
+}
+
+function buildLineItemTile(tile, sectionData) {
+  const data = computeLineItemSeries(tile, sectionData);
+  if (!data) return buildInsightPlaceholder(`${tile.label || tile.account} — no data for the current entity/month.`);
+
+  const wrap = document.createElement("div");
+  wrap.className = "card";
+  wrap.innerHTML = `<div class="card-title">${escapeHtml(data.label)}</div>`;
+
+  const rows = document.createElement("div");
+  rows.className = "cmp-rows";
+  const periodNames = ["This Month", "Year-to-Date", "Trailing 12 Mo"];
+  periodPairsFor(data.series, currentMonthIdx).forEach((pair, i) => {
+    const row = document.createElement("div");
+    row.className = "cmp-row";
+    const arrow = arrowFor(pair.current, pair.prior, data.polarity, 0.5);
+    const delta = pctChange(pair.current, pair.prior);
+    row.innerHTML = `<span class="cmp-label">${periodNames[i]}</span>` +
+      `<span class="cmp-value arrow-${arrow.cls}">${fmtMoney(pair.current)} <span class="arrow-${arrow.cls}">${arrow.symbol} ${delta == null ? "—" : fmtPct(delta)}</span></span>`;
+    rows.appendChild(row);
+  });
+  wrap.appendChild(rows);
+  return wrap;
+}
+
+// Small helpers duplicating (deliberately, not extracting) the ~6-line
+// bodies of renderAccountTrendLegend/renderFiveYearLegend, which both take
+// a containerId and do document.getElementById(...) — a tile isn't attached
+// to the document yet when it needs its legend built, so getElementById
+// would return null. Returning a detached element instead avoids touching
+// those two working, ID-based functions at all.
+function buildAccountTrendLegendEl(seriesList) {
+  const el = document.createElement("div");
+  el.className = "at-legend";
+  seriesList.forEach(s => {
+    const span = document.createElement("span");
+    span.innerHTML = `<i style="background:${s.color};"></i>${escapeHtml(s.label)}`;
+    el.appendChild(span);
+  });
+  return el;
+}
+function buildFiveYearLegendEl(years) {
+  const row = document.createElement("div");
+  row.className = "chip-row compact";
+  years.forEach((year, i) => {
+    const chip = document.createElement("div");
+    chip.style.cssText = "display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--muted);";
+    chip.innerHTML = `<span style="width:9px;height:9px;border-radius:2px;background:${activeFiveYearPalette()[i] || "#1a73e8"};display:inline-block;"></span>${year}`;
+    row.appendChild(chip);
+  });
+  return row;
+}
+
+function buildChartCardEl(titleText, legendEl) {
+  const card = document.createElement("div");
+  card.className = "chart-card compact";
+  const head = document.createElement("div");
+  head.className = "chart-card-head";
+  head.innerHTML = `<div class="chart-card-title">${escapeHtml(titleText)}</div>`;
+  card.appendChild(head);
+  card.appendChild(legendEl);
+  const chartWrap = document.createElement("div");
+  chartWrap.className = "chart-svg-wrap";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const tooltip = document.createElement("div");
+  tooltip.className = "chart-tooltip";
+  chartWrap.appendChild(svg);
+  chartWrap.appendChild(tooltip);
+  card.appendChild(chartWrap);
+  return { card, svg, tooltip };
+}
+
+function buildAccountTrendChartTile(tile, companies, summaryLines, budgetTree) {
+  const selectedIds = new Set((tile.config && tile.config.selectedIds) || []);
+  const data = computeAccountTrendSeries(companies, summaryLines, budgetTree, selectedIds);
+  if (!data) return buildInsightPlaceholder("None of these accounts have data for the current entity/month.");
+
+  const wrap = document.createElement("div");
+  wrap.className = "card insight-chart";
+  wrap.innerHTML = `<div class="card-title">Account Trends</div>`;
+  if (data.matchedCount < data.requestedCount) {
+    const note = document.createElement("div");
+    note.className = "card-margin";
+    note.textContent = `${data.matchedCount} of ${data.requestedCount} accounts available for the current entity`;
+    wrap.appendChild(note);
+  }
+  const chartFn = (tile.config && tile.config.mode === "stacked") ? renderStackedColumnChart : renderMultiLineChart;
+  [["Actual $ by Month", data.dollarSeriesList, false], ["% of Revenue by Month", data.pctSeriesList, true]].forEach(([label, seriesList, isPct]) => {
+    const { card, svg, tooltip } = buildChartCardEl(label, buildAccountTrendLegendEl(seriesList));
+    wrap.appendChild(card);
+    chartFn(svg, tooltip, data.xLabels, seriesList, isPct);
+  });
+  return wrap;
+}
+
+function buildFiveYearChartTile(tile, companies, summaryLines, budgetTree) {
+  const items = buildAccountTrendItems(companies, summaryLines, budgetTree);
+  const line = items.find(it => it.id === (tile.config && tile.config.itemId));
+  if (!line) return buildInsightPlaceholder(`${tile.label || "This chart"} — account no longer available for the current entity.`);
+
+  const endIdx = currentMonthIdx;
+  const monthData = buildFiveYearGroups(line.series, endIdx, "month");
+  const ytdData = buildFiveYearGroups(line.series, endIdx, "ytd");
+
+  const wrap = document.createElement("div");
+  wrap.className = "card insight-chart";
+  wrap.innerHTML = `<div class="card-title">${escapeHtml(line.label)} — 5-Year Trend</div>`;
+  [["By Month", monthData], ["Year-to-Date by Month", ytdData]].forEach(([label, data]) => {
+    const { card, svg, tooltip } = buildChartCardEl(label, buildFiveYearLegendEl(data.years));
+    wrap.appendChild(card);
+    renderGroupedBarChart(svg, tooltip, data.groups, data.years);
+  });
+  return wrap;
+}
+
+function buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree) {
+  let inner;
+  if (tile.type === "card") inner = buildCardTile(tile, summaryLines);
+  else if (tile.type === "lineItem") inner = buildLineItemTile(tile, sectionData);
+  else if (tile.type === "chart" && tile.source === "accountTrends") inner = buildAccountTrendChartTile(tile, companies, summaryLines, chartsBudgetTree);
+  else if (tile.type === "chart" && tile.source === "fiveYearTrends") inner = buildFiveYearChartTile(tile, companies, summaryLines, chartsBudgetTree);
+  else inner = buildInsightPlaceholder("Unrecognized tile.");
+
+  const outer = document.createElement("div");
+  outer.className = "insight-tile" + (tile.type === "chart" ? " chart-tile" : "");
+  outer.appendChild(inner);
+  return outer;
+}
+
+function buildInsightTileControls(tile, sortedTiles, idx) {
+  const controls = document.createElement("div");
+  controls.className = "insight-tile-controls";
+  const mk = (label, title, disabled, cls, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "agenda-icon-btn" + (cls ? " " + cls : "");
+    b.title = title;
+    b.textContent = label;
+    b.disabled = !!disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  controls.appendChild(mk("▲", "Move up", idx === 0, "", () => moveInsightPin(tile.id, -1)));
+  controls.appendChild(mk("▼", "Move down", idx === sortedTiles.length - 1, "", () => moveInsightPin(tile.id, 1)));
+  controls.appendChild(mk("✕", "Remove from Key Insights", false, "danger", () => removeInsightPin(tile.id)));
+  return controls;
+}
+
+// The Key Insights tab's entry point — called from render() with the exact
+// same summaryLines/sectionData/companies/chartsBudgetTree every other tab
+// just got, so a pinned tile can never drift from what the rest of the
+// dashboard is currently showing.
+function renderInsightsBoard(summaryLines, sectionData, companies, entVal, chartsBudgetTree) {
+  const board = document.getElementById("insightsBoard");
+  const emptyEl = document.getElementById("insightsEmpty");
+  if (!board) return;
+
+  const tiles = (insightsBoardData && insightsBoardData.tiles)
+    ? insightsBoardData.tiles.slice().sort((a, b) => a.order - b.order)
+    : [];
+
+  board.innerHTML = "";
+  if (!tiles.length) {
+    emptyEl.style.display = "";
+    board.style.display = "none";
+    return;
+  }
+  emptyEl.style.display = "none";
+  board.style.display = "";
+  tiles.forEach((tile, idx) => {
+    const dom = buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree);
+    dom.appendChild(buildInsightTileControls(tile, tiles, idx));
+    board.appendChild(dom);
+  });
+}
+
 // ---- Priority-waterfall recommendation engine ----
 function computeRecommendations(year) {
   const yd = ensureYearData(year);
@@ -5014,6 +5367,11 @@ function render() {
   renderCompare(summaryLines, sectionData, companies, entVal);
   renderHistory(summaryLines, sectionData, companies, entVal);
   renderBusinessLines(companies);
+  // Key Insights board reuses this same freshly-recomputed data every render
+  // rather than fetching/deriving anything of its own -- that's what makes
+  // a pinned tile "live": it's just another consumer of the exact numbers
+  // every other tab is showing right now, not a snapshot taken at pin time.
+  renderInsightsBoard(summaryLines, sectionData, companies, entVal, chartsBudgetTree);
 
   document.getElementById("footerNote").textContent =
     `Showing ${entVal === "__CONSOLIDATED__" ? "Consolidated (" + companies.length + " entities)" : entVal} · ` +
@@ -5116,10 +5474,17 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
   // a synthesized/merged label or a debt-principal row, which have no
   // single matching GL account to filter to) wires up this row's actual-$
   // cells for the drill-down, same scope rule as addSummaryRow above.
-  function addDetailRow(label, series, polarity, rowKey, account) {
+  function addDetailRow(label, series, polarity, rowKey, account, section) {
     const drillMeta = account ? { kind: "account", account, companies } : null;
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false, drillMeta);
-    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), cells);
+    // Only real, single-account rows in a genuine P&L section are pinnable
+    // (both account and section known) -- debt-principal detail rows pass no
+    // `account` at all (no matching GL account, see the drillMeta comment
+    // above) and so never reach here with a truthy account.
+    const rowPin = (account && section)
+      ? { type: "lineItem", kind: "account", account, section, label, polarity }
+      : null;
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), cells, null, rowPin);
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
@@ -5184,7 +5549,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
             // row's label won't match any single real GL account, so its
             // drill-down will correctly (if unhelpfully) show "no matching
             // transactions" rather than a wrong/partial result.
-            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account));
+            if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account, "Expenses"));
           });
         }
       }
@@ -5194,7 +5559,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
         if (!g.rows.length) return;
         const gKey = "stmt_exp_" + g.label.replace(/[^a-z0-9]+/gi, "_");
         addGroupRow(g.label, g.series, gKey, "summary-line");
-        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account));
+        if (expandedKeys.has(gKey)) g.rows.forEach(r => addDetailRow(r.account, r.values, "neg", gKey + "::" + r.account, r.account, "Expenses"));
       });
       return;
     }
@@ -5207,7 +5572,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
         addSubHeader(sectionDisplayLabel(sectionKey), line.key);
       }
       const pol = SECTION_POLARITY[sectionKey] || "pos";
-      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol, sectionKey + "::" + r.account, r.account));
+      sectionData[sectionKey].rows.forEach(r => addDetailRow(r.account, r.values, pol, sectionKey + "::" + r.account, r.account, sectionKey));
     });
   });
 
@@ -5264,7 +5629,7 @@ function renderStatement(summaryLines, sectionData, companies, entVal) {
     addPlainDivider("Seasonal Expenses — Included in Net Income Above");
     const seasonalKey = "stmt_expseasonal";
     addGroupRow(expenseGroups.seasonalGroup.label, expenseGroups.seasonalGroup.series, seasonalKey, "summary-line");
-    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", seasonalKey + "::" + r.account, r.account));
+    if (expandedKeys.has(seasonalKey)) expenseGroups.seasonalGroup.rows.forEach(r => addDetailRow(r.account, r.values, "neg", seasonalKey + "::" + r.account, r.account, "Expenses"));
   }
 
   table.appendChild(tbody);
@@ -5322,6 +5687,19 @@ function buildPeriodCells(pairs, polarity, isPct, drillMeta) {
   return cells;
 }
 
+// Re-derives a pinned line-item's live series from THIS render's sectionData
+// — never reads anything cached from pin time, matching the Key Insights
+// board's "live" design. Returns null when the pin doesn't resolve under the
+// current selection (account had no trailing-12-month activity, entity
+// switched to one without this account, or a merged/renamed label) — the
+// caller renders a placeholder tile rather than treating this as an error.
+function computeLineItemSeries(pin, sectionData) {
+  const sec = sectionData[pin.section];
+  if (!sec) return null;
+  const row = sec.rows.find(r => r.account === pin.account);
+  return row ? { series: row.values, label: pin.label || pin.account, polarity: pin.polarity } : null;
+}
+
 function labelWithChevron(label, expandKey) {
   if (!expandKey) return `<span class="no-chev"></span>${escapeHtml(label)}`;
   // Click handling lives on the row itself (see buildRow) so the whole line
@@ -5359,7 +5737,12 @@ function th(text, cls) {
   return el;
 }
 
-function buildRow(rowClass, labelHtml, cells, expandKey) {
+// rowPin (only ever passed by P&L Statement's own addDetailRow, never by
+// Balance Sheet/Cash Flow/Budget/etc. — those tabs' rows carry no `pin`
+// property at all, so this is a no-op for them) adds a small hover-visible
+// 📌 button to the row's label cell for pinning that account to the Key
+// Insights board.
+function buildRow(rowClass, labelHtml, cells, expandKey, rowPin) {
   const tr = document.createElement("tr");
   tr.className = rowClass;
   // Whole row is the click target when this row can expand/collapse (not
@@ -5369,6 +5752,7 @@ function buildRow(rowClass, labelHtml, cells, expandKey) {
   const labelTd = document.createElement("td");
   labelTd.className = "label-col";
   labelTd.innerHTML = labelHtml;
+  if (rowPin) addPinButton(labelTd, rowPin, "Pin this line item to Key Insights");
   tr.appendChild(labelTd);
   cells.forEach(c => {
     const td = document.createElement("td");
@@ -6839,6 +7223,74 @@ function renderRecurringPayments() {
 // on reading a P&L.
 const CARD_ORDER = ["revenue", "cos", "expenses", "nonOperating", "grossProfit", "operatingIncome", "netIncome"];
 
+// Builds one P&L summary card DOM node from a live summaryLines entry --
+// factored out of renderCards so the Key Insights board can pin the exact
+// same card (same math, same markup) without a second implementation.
+function buildCardDom(line) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const current = line.series[currentMonthIdx];
+  const pctNow = line.pctOfRevenue.series[currentMonthIdx];
+  let html = `<div class="card-title">${escapeHtml(line.label)}</div>`;
+  html += `<div class="card-value${current < 0 ? " neg" : ""}">${fmtMoney(current)}</div>`;
+  html += `<div class="card-margin">% of Revenue: ${fmtPct(pctNow)}</div>`;
+  card.innerHTML = html;
+
+  const chipRow = document.createElement("div");
+  chipRow.className = "chip-row";
+  AVG_WINDOWS.forEach(w => {
+    const avg = trailingAverage(line.series, currentMonthIdx, w.months);
+    chipRow.appendChild(chipFor(w.label, avg, current, line.polarity, false));
+  });
+  card.appendChild(chipRow);
+
+  const pctLabelEl = document.createElement("div");
+  pctLabelEl.className = "chip-row-caption";
+  pctLabelEl.textContent = "% of Revenue vs. averages";
+  card.appendChild(pctLabelEl);
+
+  const pctChipRow = document.createElement("div");
+  pctChipRow.className = "chip-row";
+  AVG_WINDOWS.forEach(w => {
+    const avg = trailingAverageRatio(line.pctOfRevenue.num, line.pctOfRevenue.den, currentMonthIdx, w.months);
+    pctChipRow.appendChild(chipFor(w.label, avg, pctNow, line.polarity, true));
+  });
+  card.appendChild(pctChipRow);
+
+  const cmpWrap = document.createElement("div");
+  cmpWrap.className = "cmp-rows";
+  cmpWrap.appendChild(cmpRow("vs. Same Month, Prior Year", pyMonthCompare(line), line.polarity));
+  cmpWrap.appendChild(cmpRow("YTD vs. Prior-Year YTD", ytdCompare(line), line.polarity));
+  cmpWrap.appendChild(cmpRow("Trailing 12 Mo vs. Prior 12 Mo", ttmCompare(line), line.polarity));
+  card.appendChild(cmpWrap);
+
+  return card;
+}
+
+// Small hover-visible 📌 button reused by every pinnable card/line-item —
+// appends it into an already-built tile/card DOM node.
+// Note: the container must already establish its own CSS positioning
+// context (relative/sticky/absolute) via the stylesheet -- deliberately not
+// forced here via inline style, since e.g. td.label-col relies on its own
+// `position: sticky` for the sticky-left column behavior, and an inline
+// `position: relative` would silently override that for any row this gets
+// attached to.
+function addPinButton(container, pin, title) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "pin-btn";
+  btn.title = title || "Pin to Key Insights";
+  btn.textContent = "📌";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    addInsightPin(pin);
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = "📌"; }, 700);
+  });
+  container.appendChild(btn);
+}
+
 function renderCards(summaryLines) {
   document.getElementById("trendSub").textContent =
     `Trailing averages anchored on ${months[currentMonthIdx].label}. Arrows reflect whether the direction is favorable for that line.`;
@@ -6848,46 +7300,14 @@ function renderCards(summaryLines) {
 
   const byKey = new Map(summaryLines.map(l => [l.key, l]));
   CARD_ORDER.map(k => byKey.get(k)).forEach(line => {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    const current = line.series[currentMonthIdx];
-    const pctNow = line.pctOfRevenue.series[currentMonthIdx];
-    let html = `<div class="card-title">${escapeHtml(line.label)}</div>`;
-    html += `<div class="card-value${current < 0 ? " neg" : ""}">${fmtMoney(current)}</div>`;
-    html += `<div class="card-margin">% of Revenue: ${fmtPct(pctNow)}</div>`;
-    card.innerHTML = html;
-
-    const chipRow = document.createElement("div");
-    chipRow.className = "chip-row";
-    AVG_WINDOWS.forEach(w => {
-      const avg = trailingAverage(line.series, currentMonthIdx, w.months);
-      chipRow.appendChild(chipFor(w.label, avg, current, line.polarity, false));
-    });
-    card.appendChild(chipRow);
-
-    const pctLabelEl = document.createElement("div");
-    pctLabelEl.className = "chip-row-caption";
-    pctLabelEl.textContent = "% of Revenue vs. averages";
-    card.appendChild(pctLabelEl);
-
-    const pctChipRow = document.createElement("div");
-    pctChipRow.className = "chip-row";
-    AVG_WINDOWS.forEach(w => {
-      const avg = trailingAverageRatio(line.pctOfRevenue.num, line.pctOfRevenue.den, currentMonthIdx, w.months);
-      pctChipRow.appendChild(chipFor(w.label, avg, pctNow, line.polarity, true));
-    });
-    card.appendChild(pctChipRow);
-
-    const cmpWrap = document.createElement("div");
-    cmpWrap.className = "cmp-rows";
-    cmpWrap.appendChild(cmpRow("vs. Same Month, Prior Year", pyMonthCompare(line), line.polarity));
-    cmpWrap.appendChild(cmpRow("YTD vs. Prior-Year YTD", ytdCompare(line), line.polarity));
-    cmpWrap.appendChild(cmpRow("Trailing 12 Mo vs. Prior 12 Mo", ttmCompare(line), line.polarity));
-    card.appendChild(cmpWrap);
-
+    const card = buildCardDom(line);
+    addPinButton(card, { type: "card", cardKey: line.key }, "Pin this card to Key Insights");
     grid.appendChild(card);
-    if (line.key === "grossProfit") grid.appendChild(buildGrossMarginCard(line));
+    if (line.key === "grossProfit") {
+      const marginCard = buildGrossMarginCard(line);
+      addPinButton(marginCard, { type: "card", cardKey: "grossMargin" }, "Pin this card to Key Insights");
+      grid.appendChild(marginCard);
+    }
   });
 }
 
@@ -7503,22 +7923,16 @@ function syncAccountTrendListHeight() {
   list.style.height = Math.max(300, h) + "px";
 }
 
-function renderCharts(companies, summaryLines, budgetTree) {
+// Pure data-prep, factored out of renderCharts so a Key Insights chart tile
+// can re-derive the exact same series for an arbitrary (possibly pinned)
+// selectedIds set, off whatever companies/summaryLines/budgetTree THIS
+// render just computed — matchedCount/requestedCount lets a caller tell a
+// full match from a pin whose accounts partly don't resolve under the
+// current Entity (rather than silently showing a partial chart).
+function computeAccountTrendSeries(companies, summaryLines, budgetTree, selectedIds) {
   const items = buildAccountTrendItems(companies, summaryLines, budgetTree);
-  renderAccountTrendList(items);
-
-  const selected = items.filter(it => chartSelectedIds.has(it.id));
-  const emptyEl = document.getElementById("chartsEmpty");
-  const contentEl = document.getElementById("chartsContent");
-
-  if (!selected.length) {
-    emptyEl.style.display = "";
-    contentEl.style.display = "none";
-    syncAccountTrendListHeight();
-    return;
-  }
-  emptyEl.style.display = "none";
-  contentEl.style.display = "";
+  const selected = items.filter(it => selectedIds.has(it.id));
+  if (!selected.length) return null;
 
   const revenueSeries = summaryLines.find(l => l.key === "revenue").series;
   const endIdx = currentMonthIdx;
@@ -7536,16 +7950,35 @@ function renderCharts(companies, summaryLines, budgetTree) {
     label: it.label, color: palette[i % palette.length],
     values: idxRange.map(idx => (revenueSeries[idx] ? it.series[idx] / revenueSeries[idx] : null))
   }));
+  return { xLabels, dollarSeriesList, pctSeriesList, matchedCount: selected.length, requestedCount: selectedIds.size };
+}
+
+function renderCharts(companies, summaryLines, budgetTree) {
+  const items = buildAccountTrendItems(companies, summaryLines, budgetTree);
+  renderAccountTrendList(items);
+
+  const emptyEl = document.getElementById("chartsEmpty");
+  const contentEl = document.getElementById("chartsContent");
+  const data = computeAccountTrendSeries(companies, summaryLines, budgetTree, chartSelectedIds);
+
+  if (!data) {
+    emptyEl.style.display = "";
+    contentEl.style.display = "none";
+    syncAccountTrendListHeight();
+    return;
+  }
+  emptyEl.style.display = "none";
+  contentEl.style.display = "";
 
   document.getElementById("chartsHeading").textContent =
-    `${selected.length} account${selected.length === 1 ? "" : "s"} selected · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
-    `${xLabels.length}-month window ending ${months[endIdx].label}`;
+    `${data.matchedCount} account${data.matchedCount === 1 ? "" : "s"} selected · ${entityDisplayName(document.getElementById("entitySelect").value || "__CONSOLIDATED__", companies)} · ` +
+    `${data.xLabels.length}-month window ending ${months[currentMonthIdx].label}`;
 
-  renderAccountTrendLegend("chartDollarLegend", dollarSeriesList);
-  renderAccountTrendLegend("chartPctLegend", pctSeriesList);
+  renderAccountTrendLegend("chartDollarLegend", data.dollarSeriesList);
+  renderAccountTrendLegend("chartPctLegend", data.pctSeriesList);
   const chartFn = accountChartMode === "stacked" ? renderStackedColumnChart : renderMultiLineChart;
-  chartFn(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), xLabels, dollarSeriesList, false);
-  chartFn(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), xLabels, pctSeriesList, true);
+  chartFn(document.getElementById("chartDollar"), document.getElementById("chartDollarTooltip"), data.xLabels, data.dollarSeriesList, false);
+  chartFn(document.getElementById("chartPct"), document.getElementById("chartPctTooltip"), data.xLabels, data.pctSeriesList, true);
   syncAccountTrendListHeight();
 }
 
@@ -8101,6 +8534,7 @@ function activateTab(name) {
   document.getElementById("panel-retireyear").hidden = name !== "retireyear";
   document.getElementById("panel-retire12").hidden = name !== "retire12";
   document.getElementById("panel-profitability").hidden = name !== "profitability";
+  document.getElementById("panel-insights").hidden = name !== "insights";
   document.getElementById("colorSchemeControl").hidden = name !== "fiveyear";
 }
 
@@ -8119,6 +8553,14 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   }
 })();
 
+// Present mode: hides nav/status chrome and enlarges tiles for screen-
+// sharing during a meeting -- session-only (not persisted), since it's a
+// "we're about to present right now" action, not a lasting preference.
+document.getElementById("presentModeBtn").addEventListener("click", () => {
+  const on = document.body.classList.toggle("presenting");
+  document.getElementById("presentModeBtn").textContent = on ? "🖥 Exit Present Mode" : "🖥 Present";
+});
+
 document.getElementById("generateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
 document.getElementById("regenerateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
 document.getElementById("entitySelect").addEventListener("change", render);
@@ -8126,6 +8568,13 @@ document.getElementById("monthSelect").addEventListener("change", render);
 document.getElementById("atClearAllBtn").addEventListener("click", () => {
   chartSelectedIds.clear();
   render();
+});
+document.getElementById("atPinChartBtn").addEventListener("click", () => {
+  if (!chartSelectedIds.size) { alert("Check one or more accounts first."); return; }
+  addInsightPin({
+    type: "chart", source: "accountTrends",
+    config: { selectedIds: [...chartSelectedIds], mode: accountChartMode }
+  });
 });
 
 (function initAccountTrendColorSelect() {
@@ -8153,6 +8602,10 @@ document.getElementById("fiveYearLinePicker").addEventListener("change", e => {
 document.getElementById("fiveYearDetailPicker").addEventListener("change", e => {
   fiveYearActiveId = e.target.value;
   render();
+});
+document.getElementById("fyPinChartBtn").addEventListener("click", () => {
+  if (!fiveYearActiveId) return;
+  addInsightPin({ type: "chart", source: "fiveYearTrends", config: { itemId: fiveYearActiveId } });
 });
 
 (function initFiveYearColorSchemeSelect() {
