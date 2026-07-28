@@ -112,11 +112,20 @@
   #agendaDrawer {
     position: fixed; top: var(--sticky-top-h, 90px); right: 24px; z-index: 40;
     width: 460px; max-width: calc(100vw - 48px);
-    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--agenda-c0, #fff); border: 1px solid var(--border); border-radius: 10px;
     max-height: calc(100vh - var(--sticky-top-h, 90px) - 20px);
     overflow: hidden; display: flex; flex-direction: column;
-    box-shadow: 0 10px 32px rgba(20,30,45,0.28);
+    box-shadow: 0 14px 38px rgba(20,30,45,0.38);
+    transition: top 0.3s ease;
   }
+  /* Rolled up, the drawer shrinks to just its header bar -- but that bar is
+     still anchored at the SAME top (the boundary where report content
+     begins), so it kept covering the first row or two of whatever table
+     sits underneath. Shifting collapsed `top` up by the header bar's own
+     height (measured live at toggle time, since it can wrap to 2 lines on
+     narrow viewports) tucks the rolled-up bar back into the sticky
+     header/nav chrome above the content instead -- clear of every report. */
+  #agendaDrawer.collapsed { top: calc(var(--sticky-top-h, 90px) - var(--agenda-head-h, 54px)); }
   .agenda-drawer-head {
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
     background: var(--agenda-c4, var(--navy)); color: #fff; padding: 12px 16px; flex: none;
@@ -8210,7 +8219,10 @@ document.getElementById("agendaToggleBtn").addEventListener("click", () => {
   if (!drawer.hidden) drawer.classList.remove("collapsed"); // always reopen expanded
 });
 document.getElementById("agendaCollapseBtn").addEventListener("click", () => {
-  document.getElementById("agendaDrawer").classList.toggle("collapsed");
+  const drawer = document.getElementById("agendaDrawer");
+  const head = drawer.querySelector(".agenda-drawer-head");
+  if (head) drawer.style.setProperty("--agenda-head-h", (head.getBoundingClientRect().height + 2) + "px");
+  drawer.classList.toggle("collapsed");
 });
 document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
 document.getElementById("agendaGeneratePunchBtn").addEventListener("click", generateAgendaPunchList);
