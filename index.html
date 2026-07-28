@@ -441,19 +441,23 @@
      .color-scheme-control[hidden]. */
 
   /* ---- Key Insights board ---------------------------------------------
-     Ordered grid of pinned tiles — deliberately NOT a free-form canvas,
-     see the plan's "ordered grid/list" decision. Chart tiles span 2
-     columns so axis labels stay legible at any grid width; .insight-tile
-     itself needs no visual styling of its own (the reused .card inside it
-     already supplies border/background/shadow) beyond position:relative
-     as a home for the ▲▼✕ controls. */
+     Single left-justified column, capped well short of full width, so
+     tiles never reach under where the Meeting Agenda drawer floats
+     (position:fixed, right:24px, ~460px wide) -- the two can stay open
+     side by side during a meeting instead of the board hiding behind the
+     drawer. .insight-tile itself needs no visual styling of its own (the
+     reused .card inside it already supplies border/background/shadow)
+     beyond position:relative as a home for the ▲▼✕✎ controls. */
   .insight-board-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
-  .insight-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-  @media (max-width: 1000px) { .insight-grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px) { .insight-grid { grid-template-columns: 1fr; } }
-  .insight-tile { position: relative; }
-  .insight-tile.chart-tile { grid-column: span 2; }
-  @media (max-width: 700px) { .insight-tile.chart-tile { grid-column: span 1; } }
+  .insight-board-head-actions { display: flex; gap: 8px; flex: none; }
+  /* max-width shrinks with the viewport (not just a flat 640px) so the
+     board's right edge always clears the Agenda drawer's left edge
+     (position:fixed, right:24px, ~460px wide) regardless of how wide the
+     browser window actually is — a flat cap only worked on wide windows;
+     on a narrower one the board's own right edge could still land past
+     where the drawer starts. 320px floor keeps this sane on tiny viewports. */
+  .insight-grid { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; max-width: min(640px, max(320px, calc(100vw - 560px))); }
+  .insight-tile { position: relative; width: 100%; }
   .insight-tile-controls { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; z-index: 1; }
   .insight-tile .card { padding-top: 32px; }
   .insight-placeholder { color: var(--muted); font-style: italic; }
@@ -464,23 +468,56 @@
   .card-title:empty { display: none; }
   .insight-tile-note { font-size: 11.5px; color: var(--muted); font-style: italic; margin-top: 3px; }
   .insight-tile-note:empty { display: none; }
-  .insight-edit-panel { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
+  /* Edit panel now renders BEFORE the pinned content (see
+     buildInsightTileDom) -- border/margin/padding sit on its bottom edge,
+     not its top, so the dashed divider reads as "editing controls above,
+     the actual tile below" rather than the old bottom-anchored version.
+     padding-top clears the same ▲▼✕✎ controls .card handles below. */
+  .insight-edit-panel { padding-top: 32px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
   .insight-edit-panel input[type="text"], .insight-edit-panel textarea {
     font-size: 12.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px;
     font-family: inherit; width: 100%; box-sizing: border-box;
   }
   .insight-edit-panel textarea { min-height: 48px; resize: vertical; }
+  .insight-edit-stat-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .insight-edit-stat-row input[type="text"] { flex: 1 1 180px; width: auto; }
+  .insight-edit-arrow-group { display: flex; gap: 4px; flex: none; }
+  .insight-edit-arrow-group button { width: auto; padding: 0 8px; }
+  .insight-edit-arrow-group button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .insight-edit-image-zone {
+    border: 1px dashed var(--border); border-radius: 6px; padding: 12px; text-align: center;
+    font-size: 12px; color: var(--muted); cursor: text;
+  }
+  .insight-edit-image-zone:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .insight-edit-image-actions { display: flex; gap: 8px; }
+
+  /* ---- Custom (freeform) insight tile ---------------------------------- */
+  .insight-custom-image { margin-bottom: 8px; }
+  .insight-custom-image:empty { display: none; }
+  .insight-custom-image img { max-width: 100%; border-radius: 6px; display: block; }
+  .insight-custom-stat { display: flex; align-items: baseline; gap: 8px; }
+  .insight-custom-arrow { font-size: 20px; }
+  .insight-custom-arrow.good { color: var(--good); }
+  .insight-custom-arrow.bad { color: var(--bad); }
+  .insight-custom-arrow:empty { display: none; }
+  .insight-custom-number { font-size: 22px; font-weight: 800; }
+  .insight-custom-number:empty { display: none; }
+  .insight-custom-hint { color: var(--muted); font-style: italic; font-size: 12.5px; }
 
   /* Present mode: hides nav/status chrome and enlarges tiles for screen-
-     sharing, toggled by #presentModeBtn — session-only, not persisted. */
+     sharing, toggled by #presentModeBtn — session-only, not persisted.
+     Unlike normal mode, width isn't capped here -- there's no need to
+     leave room for the Agenda drawer while actively presenting. */
   body.presenting .tabs, body.presenting #statusRow { display: none; }
-  body.presenting .insight-grid { grid-template-columns: repeat(2, 1fr); gap: 22px; }
-  @media (max-width: 700px) { body.presenting .insight-grid { grid-template-columns: 1fr; } }
+  body.presenting .insight-grid { flex-direction: row; flex-wrap: wrap; max-width: none; gap: 22px; }
+  body.presenting .insight-tile { width: calc(50% - 11px); }
+  @media (max-width: 900px) { body.presenting .insight-tile { width: 100%; } }
   body.presenting .insight-tile .card-value { font-size: 32px; }
   body.presenting .insight-tile .card-title { font-size: 14px; }
   /* Reorder/remove/edit chrome reads as an editing tool, not part of the
      slide — hide it while actually presenting to a client. */
   body.presenting .insight-tile-controls { display: none; }
+  body.presenting .insight-edit-panel { display: none; }
 
   .chip-row-caption { font-size: 10.5px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
   .chip-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -1147,9 +1184,12 @@
       <div class="insight-board-head">
         <div>
           <h2 class="section-title">Key Insights</h2>
-          <div class="section-sub">Pinned cards, line items, and charts from anywhere in the dashboard — always live, showing whatever Entity/Month is currently selected above. Look for the 📌 button on a card or account row, or "Pin this chart" on Account Trends / 5-Year Trends.</div>
+          <div class="section-sub">Pinned cards, line items, and charts from anywhere in the dashboard — always live, showing whatever Entity/Month is currently selected above. Look for the 📌 button on a card or account row, or "Pin this chart" on Account Trends / 5-Year Trends. Use "+ Add Custom Insight" for a freeform box — paste a screenshot, type a note, or call out a stat with a red/green arrow.</div>
         </div>
-        <button type="button" class="btn-secondary" id="presentModeBtn">🖥 Present</button>
+        <div class="insight-board-head-actions">
+          <button type="button" class="btn-secondary" id="addCustomInsightBtn">+ Add Custom Insight</button>
+          <button type="button" class="btn-secondary" id="presentModeBtn">🖥 Present</button>
+        </div>
       </div>
       <div id="insightsEmpty" class="empty-note">Nothing pinned yet — pin a card, line item, or chart from another tab to build your meeting summary here.</div>
       <div id="insightsBoard" class="insight-grid" style="display:none;"></div>
@@ -4011,7 +4051,7 @@ function renderAgendaDrawer() {
     const head = document.createElement("div");
     head.className = "agenda-section-head";
     const h3 = document.createElement("h3");
-    h3.textContent = `Archived This Meeting (${archived.length})`;
+    h3.textContent = `🗄️ Archived This Meeting (${archived.length})`;
     head.appendChild(h3);
     arch.appendChild(head);
     archived.forEach(it => arch.appendChild(buildAgendaItemRow(it)));
@@ -4115,16 +4155,27 @@ function saveInsightsBoardData() {
 
 function insightPinId() { return "pin_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8); }
 
+// Set right before creating a brand-new blank "custom" tile so
+// renderInsightsBoard can auto-open its edit panel once — a blank custom
+// tile has nothing to show until you fill it in, so jumping straight to
+// editing (rather than making the user hunt for the ✎ button) is the
+// whole point of the "+ Add Custom Insight" button.
+let autoOpenEditTileId = null;
+
 // Shared by every "📌 Pin" button (cards, line items, charts) -- appends a
 // tile at the end of the current order and triggers a full render() so the
 // new tile shows up immediately using this exact moment's live data.
-function addInsightPin(pin) {
+// opts.openEdit additionally arranges for that new tile's edit panel to
+// open automatically once it renders.
+function addInsightPin(pin, opts) {
   if (!insightsBoardData) insightsBoardData = defaultInsightsBoardData();
   const maxOrder = insightsBoardData.tiles.reduce((m, t) => Math.max(m, t.order), -1);
+  const id = insightPinId();
   insightsBoardData.tiles.push(Object.assign(
-    { id: insightPinId(), order: maxOrder + 1, pinnedAt: new Date().toISOString() },
+    { id, order: maxOrder + 1, pinnedAt: new Date().toISOString() },
     pin
   ));
+  if (opts && opts.openEdit) autoOpenEditTileId = id;
   saveInsightsBoardData();
   render();
 }
@@ -4321,6 +4372,170 @@ function buildHistoryTile(tile, summaryLines, sectionData, companies) {
   return wrap;
 }
 
+// ---- Custom (freeform) insight tile ---------------------------------------
+// The one tile type with no live dashboard data behind it at all -- a blank
+// box for a pasted screenshot, a manually-typed stat, an up/down call, and
+// the same title/note fields every other tile already has. Everything here
+// is user-entered and just round-trips through Redis as plain fields on the
+// pin record (imageDataUrl/statNumber/statArrow) -- nothing to "re-derive."
+function setCustomStatDisplay(arrowSpan, numberSpan, arrowVal, numberVal) {
+  const arrows = { up: "▲", down: "▼" };
+  arrowSpan.textContent = arrows[arrowVal] || "";
+  arrowSpan.className = "insight-custom-arrow" + (arrowVal === "up" ? " good" : arrowVal === "down" ? " bad" : "");
+  numberSpan.textContent = numberVal || "";
+}
+function customTileHasContent(tile) {
+  return !!(tile.customTitle || tile.note || tile.imageDataUrl || tile.statNumber || (tile.statArrow && tile.statArrow !== "none"));
+}
+function buildCustomTile(tile) {
+  const wrap = document.createElement("div");
+  wrap.className = "card insight-custom";
+
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "insight-custom-image";
+  if (tile.imageDataUrl) {
+    const img = document.createElement("img");
+    img.src = tile.imageDataUrl;
+    imageWrap.appendChild(img);
+  }
+  wrap.appendChild(imageWrap);
+
+  const statRow = document.createElement("div");
+  statRow.className = "insight-custom-stat";
+  const arrowSpan = document.createElement("span");
+  const numberSpan = document.createElement("span");
+  numberSpan.className = "insight-custom-number";
+  setCustomStatDisplay(arrowSpan, numberSpan, tile.statArrow, tile.statNumber);
+  statRow.appendChild(arrowSpan);
+  statRow.appendChild(numberSpan);
+  wrap.appendChild(statRow);
+
+  const emptyHint = document.createElement("div");
+  emptyHint.className = "insight-custom-hint";
+  emptyHint.textContent = "Click ✎ to add a title, image, stat, or note.";
+  emptyHint.hidden = customTileHasContent(tile);
+  wrap.appendChild(emptyHint);
+
+  return { wrap, imageWrap, arrowSpan, numberSpan, emptyHint };
+}
+
+// Shared by paste and file-picker: resizes/re-encodes client-side (JPEG,
+// capped width) before storing -- a raw phone-screenshot-sized PNG would
+// otherwise bloat the single Redis document this whole board is stored in
+// far more than a compressed copy actually needs to.
+function readAndStoreImage(file, tile, refs) {
+  if (!file || file.type.indexOf("image") !== 0) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 700;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      tile.imageDataUrl = canvas.toDataURL("image/jpeg", 0.82);
+      refs.imageWrap.innerHTML = "";
+      const displayImg = document.createElement("img");
+      displayImg.src = tile.imageDataUrl;
+      refs.imageWrap.appendChild(displayImg);
+      refs.emptyHint.hidden = true;
+      saveInsightsBoardData();
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+function handleImagePaste(e, tile, refs) {
+  const items = (e.clipboardData || window.clipboardData).items;
+  for (const item of items) {
+    if (item.type.indexOf("image") === 0) {
+      e.preventDefault();
+      readAndStoreImage(item.getAsFile(), tile, refs);
+      break;
+    }
+  }
+}
+
+// Wraps buildInsightEditPanel's title/note inputs with the custom tile's
+// extra fields (stat number, arrow picker, image paste/upload) -- reuses
+// that panel rather than duplicating the title/note wiring.
+function buildCustomEditPanel(tile, titleEl, noteEl, refs) {
+  const panel = buildInsightEditPanel(tile, titleEl, noteEl);
+  panel.classList.add("insight-custom-edit");
+
+  const statRow = document.createElement("div");
+  statRow.className = "insight-edit-stat-row";
+  const numberInput = document.createElement("input");
+  numberInput.type = "text";
+  numberInput.placeholder = "Number (optional), e.g. 42% or $12,450";
+  numberInput.value = tile.statNumber || "";
+  numberInput.addEventListener("input", () => {
+    tile.statNumber = numberInput.value;
+    setCustomStatDisplay(refs.arrowSpan, refs.numberSpan, tile.statArrow, tile.statNumber);
+    refs.emptyHint.hidden = customTileHasContent(tile);
+    saveInsightsBoardData();
+  });
+  statRow.appendChild(numberInput);
+
+  const arrowGroup = document.createElement("div");
+  arrowGroup.className = "insight-edit-arrow-group";
+  [["none", "— None"], ["up", "▲ Up"], ["down", "▼ Down"]].forEach(([val, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "agenda-icon-btn" + ((tile.statArrow || "none") === val ? " active" : "");
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      tile.statArrow = val;
+      setCustomStatDisplay(refs.arrowSpan, refs.numberSpan, tile.statArrow, tile.statNumber);
+      refs.emptyHint.hidden = customTileHasContent(tile);
+      arrowGroup.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      saveInsightsBoardData();
+    });
+    arrowGroup.appendChild(btn);
+  });
+  statRow.appendChild(arrowGroup);
+  panel.appendChild(statRow);
+
+  const imageZone = document.createElement("div");
+  imageZone.className = "insight-edit-image-zone";
+  imageZone.tabIndex = 0;
+  imageZone.textContent = "Click here, then paste an image (Ctrl+V) — or choose a file below.";
+  imageZone.addEventListener("paste", (e) => handleImagePaste(e, tile, refs));
+  panel.appendChild(imageZone);
+
+  const fileRow = document.createElement("div");
+  fileRow.className = "insight-edit-image-actions";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.style.display = "none";
+  fileInput.addEventListener("change", () => { if (fileInput.files[0]) readAndStoreImage(fileInput.files[0], tile, refs); });
+  const chooseBtn = document.createElement("button");
+  chooseBtn.type = "button";
+  chooseBtn.className = "btn-secondary";
+  chooseBtn.textContent = "Choose Image…";
+  chooseBtn.addEventListener("click", () => fileInput.click());
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-secondary";
+  removeBtn.textContent = "Remove Image";
+  removeBtn.addEventListener("click", () => {
+    tile.imageDataUrl = "";
+    refs.imageWrap.innerHTML = "";
+    refs.emptyHint.hidden = customTileHasContent(tile);
+    saveInsightsBoardData();
+  });
+  fileRow.appendChild(chooseBtn);
+  fileRow.appendChild(fileInput);
+  fileRow.appendChild(removeBtn);
+  panel.appendChild(fileRow);
+
+  return panel;
+}
+
 // Small helpers duplicating (deliberately, not extracting) the ~6-line
 // bodies of renderAccountTrendLegend/renderFiveYearLegend, which both take
 // a containerId and do document.getElementById(...) — a tile isn't attached
@@ -4481,8 +4696,9 @@ function buildInsightEditPanel(tile, titleEl, noteEl) {
 }
 
 function buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree) {
-  let inner;
+  let inner, customRefs = null;
   if (tile.type === "card") inner = buildCardTile(tile, summaryLines);
+  else if (tile.type === "custom") { customRefs = buildCustomTile(tile); inner = customRefs.wrap; }
   else if (tile.type === "lineItem" && tile.source === "balanceSheet") inner = buildBalanceSheetTile(tile, companies);
   else if (tile.type === "lineItem" && tile.source === "compare") inner = buildCompareTile(tile, summaryLines, sectionData, companies);
   else if (tile.type === "lineItem" && tile.source === "history") inner = buildHistoryTile(tile, summaryLines, sectionData, companies);
@@ -4492,6 +4708,9 @@ function buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsB
   else inner = buildInsightPlaceholder("Unrecognized tile.");
 
   const { titleEl, noteEl } = applyTileTitleAndNote(inner, tile);
+  const editPanel = tile.type === "custom"
+    ? buildCustomEditPanel(tile, titleEl, noteEl, customRefs)
+    : buildInsightEditPanel(tile, titleEl, noteEl);
 
   const outer = document.createElement("div");
   // History's tile is chart-like (a mini trend line) even though its pin
@@ -4499,8 +4718,11 @@ function buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsB
   // its x-axis labels stay legible.
   const isChartLike = tile.type === "chart" || tile.source === "history";
   outer.className = "insight-tile" + (isChartLike ? " chart-tile" : "");
+  // Edit controls render first (above the pinned content) so they're right
+  // where the title/note/image they affect are about to appear, rather
+  // than requiring a scroll past a whole chart to reach them.
+  outer.appendChild(editPanel);
   outer.appendChild(inner);
-  outer.appendChild(buildInsightEditPanel(tile, titleEl, noteEl));
   return outer;
 }
 
@@ -4552,6 +4774,15 @@ function renderInsightsBoard(summaryLines, sectionData, companies, entVal, chart
     const dom = buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree);
     dom.appendChild(buildInsightTileControls(tile, tiles, idx, dom));
     board.appendChild(dom);
+    if (tile.id === autoOpenEditTileId) {
+      const panel = dom.querySelector(".insight-edit-panel");
+      if (panel) {
+        panel.hidden = false;
+        const titleInput = panel.querySelector('input[type="text"]');
+        if (titleInput) titleInput.focus();
+      }
+      autoOpenEditTileId = null;
+    }
   });
 }
 
@@ -8813,6 +9044,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 document.getElementById("presentModeBtn").addEventListener("click", () => {
   const on = document.body.classList.toggle("presenting");
   document.getElementById("presentModeBtn").textContent = on ? "🖥 Exit Present Mode" : "🖥 Present";
+});
+document.getElementById("addCustomInsightBtn").addEventListener("click", () => {
+  addInsightPin({ type: "custom" }, { openEdit: true });
 });
 
 document.getElementById("generateAnalysisBtn").addEventListener("click", generateAnalysisForCurrent);
