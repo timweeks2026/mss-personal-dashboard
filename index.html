@@ -81,6 +81,61 @@
   select.row-select { font-size: 11.5px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; }
   input.merge-input { font-size: 11.5px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; width: 90px; }
 
+  /* ---- Meeting Agenda drawer: lives inside #stickyTop (below the header,
+     above the tab nav), so opening/closing it is picked up by the same
+     updateStickyTopHeight() logic every table's sticky thead already
+     depends on -- it grows/shrinks the sticky region rather than floating
+     over the page, which is what keeps it "always available" without
+     needing its own fixed-position/z-index bookkeeping. ---- */
+  button#agendaToggleBtn {
+    font-size: 13px; padding: 9px 14px; border-radius: 6px;
+    border: 1px solid #4a6a90; background: var(--navy-light); color: #fff; cursor: pointer;
+  }
+  button#agendaToggleBtn:hover { background: #1d4670; }
+  button#agendaToggleBtn.active { background: var(--accent); border-color: var(--accent); }
+  #agendaDrawer {
+    background: #fff; border-bottom: 2px solid var(--accent); padding: 14px 28px 18px;
+    max-height: 65vh; overflow-y: auto; box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+  }
+  .agenda-drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .agenda-drawer-head h2 { font-size: 15px; color: var(--navy); margin: 0; }
+  .agenda-drawer-actions { display: flex; align-items: center; gap: 8px; }
+  .agenda-sections { display: flex; flex-direction: column; gap: 16px; }
+  .agenda-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .agenda-section-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; }
+  .agenda-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .agenda-item-wrap { border-bottom: 1px solid #f0f0f0; padding: 4px 0; }
+  .agenda-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .agenda-item.archived { opacity: 0.6; }
+  .agenda-item.forwarded { background: #fff8e1; border-radius: 6px; padding: 4px 6px; }
+  .agenda-discussed-cb { flex: none; accent-color: var(--good); cursor: pointer; }
+  .agenda-item-text {
+    flex: 1 1 260px; min-width: 160px; font-size: 13px; padding: 6px 8px;
+    border: 1px solid var(--border); border-radius: 5px;
+  }
+  .agenda-owner-select { font-size: 12px; padding: 5px 6px; border-radius: 5px; border: 1px solid var(--border); min-width: 110px; }
+  .agenda-item-meta { font-size: 11px; color: var(--muted); font-style: italic; }
+  .agenda-notes-box { margin: 6px 0 4px 26px; }
+  .agenda-notes-box textarea {
+    width: 100%; max-width: 600px; min-height: 50px; font-size: 12.5px; padding: 6px 8px;
+    border: 1px solid var(--border); border-radius: 5px; font-family: inherit;
+  }
+  .agenda-archived-section { opacity: 0.85; }
+  .agenda-punchlist { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .agenda-punchlist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .agenda-punchlist-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; }
+  .agenda-punchlist-body {
+    font-family: inherit; font-size: 13px; white-space: pre-wrap; background: #f8fafc;
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 0;
+  }
+  .agenda-punchlist-body.empty { color: var(--muted); font-style: italic; }
+  .agenda-error { color: var(--bad); font-size: 12px; margin-bottom: 6px; }
+  .agenda-history-meeting { border-bottom: 1px solid var(--border); padding: 10px 0; }
+  .agenda-history-meeting h3 { font-size: 13px; color: var(--navy); margin: 0 0 6px; }
+  .agenda-history-sec-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--muted); margin-top: 8px; font-weight: 700; }
+  .agenda-history-item { font-size: 12.5px; padding: 2px 0 2px 8px; }
+  .agenda-history-punchlist { font-size: 12px; white-space: pre-wrap; background: #f8fafc; border-radius: 6px; padding: 8px 10px; margin: 4px 0 0; font-family: inherit; }
+
   /* ---- Retirement Plan tabs ---- */
   .retire-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
   @media (max-width: 980px) { .retire-grid { grid-template-columns: 1fr; } }
@@ -484,6 +539,10 @@
       <select id="monthSelect"></select>
     </div>
     <div>
+      <label>&nbsp;</label>
+      <button type="button" id="agendaToggleBtn">📋 Meeting Agenda</button>
+    </div>
+    <div>
       <label>$ Display</label>
       <div class="radio-group">
         <label><input type="radio" name="scaleMode" value="actual" checked> Actual $</label>
@@ -493,6 +552,34 @@
     <button id="refreshBtn" type="button">Refresh Data</button>
   </div>
 </header>
+
+<div id="agendaDrawer" hidden>
+  <div class="agenda-drawer-head">
+    <h2>Meeting Agenda</h2>
+    <div class="agenda-drawer-actions">
+      <button type="button" class="btn-secondary" id="agendaHistoryBtn">Meeting History</button>
+      <button type="button" class="btn-primary" id="agendaNewMeetingBtn">🆕 New Meeting</button>
+      <button type="button" class="modal-close" id="agendaCloseBtn">✕</button>
+    </div>
+  </div>
+  <div class="agenda-sections" id="agendaSections"></div>
+  <div class="agenda-punchlist">
+    <div class="agenda-punchlist-head">
+      <h3>Punch List</h3>
+      <button type="button" class="btn-secondary" id="agendaGeneratePunchBtn">✨ Generate Punch List</button>
+    </div>
+    <div id="agendaPunchListError" class="agenda-error" style="display:none;"></div>
+    <pre id="agendaPunchListBody" class="agenda-punchlist-body empty"></pre>
+  </div>
+</div>
+
+<div class="modal-overlay" id="agendaHistoryModal">
+  <div class="modal-content">
+    <button type="button" class="modal-close" id="agendaHistoryCloseBtn">✕</button>
+    <div class="modal-title">Meeting History</div>
+    <div id="agendaHistoryBody"></div>
+  </div>
+</div>
 
 <nav class="tabs">
   <button class="tab-btn active" data-tab="statement" type="button">P&amp;L Statement</button>
@@ -2291,6 +2378,10 @@ async function loadData() {
   // none of which are P&L Detail tabs) -- fetched/rendered independently so
   // an unconfigured or slow-loading source here never blocks the P&L load.
   fetchProfitabilityData().then(renderProfitabilityTab).catch(() => {});
+  // Meeting Agenda drawer is its own data domain too (own Redis key), and
+  // is always visible in the header regardless of which tab/data-load state
+  // the rest of the page is in.
+  fetchMeetingAgendaData();
   try {
     const [plText, bsText, socfText] = await Promise.all([
       fetch(CSV_URL + "&_cb=" + Date.now(), { cache: "no-store" }).then(r => {
@@ -3429,6 +3520,326 @@ function saveRetirementData() {
       if (ind) { ind.textContent = "Couldn't save: " + err.message; ind.className = "save-indicator error"; }
     }
   }, 500);
+}
+
+// ---- Meeting Agenda drawer ----------------------------------------------
+// Replaces the old "static Google Slides deck" workflow with a live agenda
+// that's always available (a header toggle, independent of which tab is
+// active) and persists across meetings. Own Redis-backed data domain
+// (api/agenda.js), same "one mutable document" pattern as retirementData:
+// `current` is the working meeting in progress; `history` is a log of
+// meetings closed out via "New Meeting" (newest first). An item's `state`
+// ("active"/"archived"/"forwarded") governs both its Archive/Forward
+// buttons and, at New Meeting time, whether it's dropped, kept in history
+// only, or carried into the fresh working set.
+const AGENDA_SECTIONS = [
+  { key: "status", label: "Status" },
+  { key: "insights", label: "Key Insights" },
+  { key: "discussion", label: "Discussion Items" }
+];
+const AGENDA_OWNERS = ["Tim", "Hilary"];
+
+let meetingAgendaData = null;
+let meetingAgendaLoaded = false;
+let meetingAgendaSaveTimer = null;
+
+function defaultAgendaData() { return { current: { items: [], punchList: "" }, history: [] }; }
+
+async function fetchMeetingAgendaData() {
+  try {
+    const resp = await fetch("/api/agenda", { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const server = await resp.json();
+    meetingAgendaData = (server && server.current) ? server : defaultAgendaData();
+  } catch (err) {
+    console.warn("Couldn't load meeting agenda data: " + err.message);
+    meetingAgendaData = defaultAgendaData();
+  }
+  meetingAgendaLoaded = true;
+  renderAgendaDrawer();
+}
+
+function saveMeetingAgendaData() {
+  clearTimeout(meetingAgendaSaveTimer);
+  meetingAgendaSaveTimer = setTimeout(() => {
+    fetch("/api/agenda", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: meetingAgendaData })
+    }).catch(err => console.warn("Couldn't save meeting agenda data: " + err.message));
+  }, 500);
+}
+
+function agendaItemId() { return "item_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8); }
+
+function addAgendaItem(sectionKey) {
+  meetingAgendaData.current.items.push({
+    id: agendaItemId(), section: sectionKey, text: "", discussed: false,
+    owner: "", notes: "", state: "active", archivedDate: null
+  });
+  renderAgendaDrawer();
+  saveMeetingAgendaData();
+}
+
+// Closes out the working meeting into history (stamped today) and starts a
+// fresh working set carrying forward only items flagged "Forward" — everything
+// else (discussed-and-done or archived) stays in history only.
+function startNewMeeting() {
+  if (!meetingAgendaData.current.items.length) return;
+  if (!confirm("Close out this meeting and start a new one? Items not marked “Forward” will move to Meeting History only.")) return;
+  const closed = {
+    date: new Date().toLocaleDateString("en-US"),
+    items: meetingAgendaData.current.items.map(it => Object.assign({}, it)),
+    punchList: meetingAgendaData.current.punchList || ""
+  };
+  meetingAgendaData.history.unshift(closed);
+  const forwarded = meetingAgendaData.current.items.filter(it => it.state === "forwarded");
+  meetingAgendaData.current = {
+    items: forwarded.map(it => Object.assign({}, it, { id: agendaItemId(), state: "active", discussed: false })),
+    punchList: ""
+  };
+  renderAgendaDrawer();
+  saveMeetingAgendaData();
+}
+
+function buildAgendaMeetingText() {
+  const lines = [];
+  AGENDA_SECTIONS.forEach(sec => {
+    const items = meetingAgendaData.current.items.filter(it => it.section === sec.key && it.state !== "archived" && it.text.trim());
+    if (!items.length) return;
+    lines.push(sec.label.toUpperCase() + ":");
+    items.forEach(it => {
+      lines.push(`- ${it.text.trim()} [${it.discussed ? "discussed" : "not discussed"}${it.owner ? ", owner: " + it.owner : ""}]`);
+      if (it.notes && it.notes.trim()) lines.push("  Notes: " + it.notes.trim());
+    });
+  });
+  return lines.join("\n");
+}
+
+async function generateAgendaPunchList() {
+  const btn = document.getElementById("agendaGeneratePunchBtn");
+  const errEl = document.getElementById("agendaPunchListError");
+  errEl.style.display = "none";
+  const meetingText = buildAgendaMeetingText();
+  if (!meetingText.trim()) {
+    errEl.textContent = "Add at least one agenda item (with some text) first.";
+    errEl.style.display = "";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  try {
+    const resp = await fetch("/api/generate-punch-list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meetingText })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    meetingAgendaData.current.punchList = data.punchList;
+    renderAgendaDrawer();
+    saveMeetingAgendaData();
+  } catch (err) {
+    errEl.textContent = "Couldn't generate punch list: " + (err.message || err);
+    errEl.style.display = "";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ Generate Punch List";
+  }
+}
+
+function buildAgendaItemRow(it) {
+  const wrap = document.createElement("div");
+  wrap.className = "agenda-item-wrap";
+  const row = document.createElement("div");
+  row.className = "agenda-item" + (it.state !== "active" ? " " + it.state : "");
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "agenda-discussed-cb";
+  cb.checked = !!it.discussed;
+  cb.title = "Discussed";
+  cb.disabled = it.state === "archived";
+  cb.addEventListener("change", () => { it.discussed = cb.checked; saveMeetingAgendaData(); });
+  row.appendChild(cb);
+
+  const text = document.createElement("input");
+  text.type = "text";
+  text.className = "agenda-item-text";
+  text.value = it.text;
+  text.placeholder = "Item…";
+  text.disabled = it.state === "archived";
+  text.addEventListener("input", () => { it.text = text.value; saveMeetingAgendaData(); });
+  row.appendChild(text);
+
+  const ownerSel = document.createElement("select");
+  ownerSel.className = "agenda-owner-select";
+  ownerSel.disabled = it.state === "archived";
+  ownerSel.appendChild(new Option("Owner…", ""));
+  AGENDA_OWNERS.forEach(o => ownerSel.appendChild(new Option(o, o)));
+  ownerSel.value = it.owner || "";
+  ownerSel.addEventListener("change", () => { it.owner = ownerSel.value; saveMeetingAgendaData(); });
+  row.appendChild(ownerSel);
+
+  const notesBox = document.createElement("div");
+  notesBox.className = "agenda-notes-box";
+  notesBox.hidden = true;
+  const notesArea = document.createElement("textarea");
+  notesArea.value = it.notes || "";
+  notesArea.placeholder = "Follow-up notes…";
+  notesArea.addEventListener("input", () => { it.notes = notesArea.value; saveMeetingAgendaData(); });
+  notesBox.appendChild(notesArea);
+
+  const notesToggle = document.createElement("button");
+  notesToggle.type = "button";
+  notesToggle.className = "btn-secondary agenda-notes-btn";
+  notesToggle.textContent = "📝 Notes";
+  notesToggle.addEventListener("click", () => { notesBox.hidden = !notesBox.hidden; });
+  row.appendChild(notesToggle);
+
+  if (it.state === "active") {
+    const fwdBtn = document.createElement("button");
+    fwdBtn.type = "button";
+    fwdBtn.className = "btn-secondary";
+    fwdBtn.textContent = "↪ Forward";
+    fwdBtn.title = "Carry this item to the next meeting";
+    fwdBtn.addEventListener("click", () => { it.state = "forwarded"; renderAgendaDrawer(); saveMeetingAgendaData(); });
+    row.appendChild(fwdBtn);
+
+    const archBtn = document.createElement("button");
+    archBtn.type = "button";
+    archBtn.className = "btn-danger";
+    archBtn.textContent = "🗄 Archive";
+    archBtn.addEventListener("click", () => {
+      it.state = "archived";
+      it.archivedDate = new Date().toLocaleDateString("en-US");
+      renderAgendaDrawer();
+      saveMeetingAgendaData();
+    });
+    row.appendChild(archBtn);
+  } else {
+    const meta = document.createElement("span");
+    meta.className = "agenda-item-meta";
+    meta.textContent = it.state === "archived" ? `Archived ${it.archivedDate || ""}` : "Will carry to next meeting";
+    row.appendChild(meta);
+
+    const undoBtn = document.createElement("button");
+    undoBtn.type = "button";
+    undoBtn.className = "btn-secondary";
+    undoBtn.textContent = it.state === "archived" ? "↩ Restore" : "✕ Unforward";
+    undoBtn.addEventListener("click", () => {
+      it.state = "active";
+      it.archivedDate = null;
+      renderAgendaDrawer();
+      saveMeetingAgendaData();
+    });
+    row.appendChild(undoBtn);
+  }
+
+  wrap.appendChild(row);
+  wrap.appendChild(notesBox);
+  return wrap;
+}
+
+function renderAgendaDrawer() {
+  if (!meetingAgendaLoaded) return;
+  const container = document.getElementById("agendaSections");
+  if (!container) return; // drawer not in the DOM yet on first paint
+  container.innerHTML = "";
+
+  AGENDA_SECTIONS.forEach(sec => {
+    const secEl = document.createElement("div");
+    secEl.className = "agenda-section";
+    const head = document.createElement("div");
+    head.className = "agenda-section-head";
+    const h3 = document.createElement("h3");
+    h3.textContent = sec.label;
+    head.appendChild(h3);
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "btn-secondary";
+    addBtn.textContent = "+ Add Item";
+    addBtn.addEventListener("click", () => addAgendaItem(sec.key));
+    head.appendChild(addBtn);
+    secEl.appendChild(head);
+
+    const activeItems = meetingAgendaData.current.items.filter(it => it.section === sec.key && it.state !== "archived");
+    if (!activeItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "agenda-empty";
+      empty.textContent = "No items yet.";
+      secEl.appendChild(empty);
+    }
+    activeItems.forEach(it => secEl.appendChild(buildAgendaItemRow(it)));
+    container.appendChild(secEl);
+  });
+
+  const archived = meetingAgendaData.current.items.filter(it => it.state === "archived");
+  if (archived.length) {
+    const arch = document.createElement("div");
+    arch.className = "agenda-section agenda-archived-section";
+    const head = document.createElement("div");
+    head.className = "agenda-section-head";
+    const h3 = document.createElement("h3");
+    h3.textContent = `Archived This Meeting (${archived.length})`;
+    head.appendChild(h3);
+    arch.appendChild(head);
+    archived.forEach(it => arch.appendChild(buildAgendaItemRow(it)));
+    container.appendChild(arch);
+  }
+
+  const punchBody = document.getElementById("agendaPunchListBody");
+  if (meetingAgendaData.current.punchList) {
+    punchBody.textContent = meetingAgendaData.current.punchList;
+    punchBody.classList.remove("empty");
+  } else {
+    punchBody.textContent = "No punch list generated yet for this meeting.";
+    punchBody.classList.add("empty");
+  }
+}
+
+function renderAgendaHistory() {
+  const body = document.getElementById("agendaHistoryBody");
+  body.innerHTML = "";
+  if (!meetingAgendaData.history.length) {
+    body.innerHTML = '<div class="empty-note">No past meetings yet — closed-out meetings (via "New Meeting") will show up here.</div>';
+    return;
+  }
+  meetingAgendaData.history.forEach(m => {
+    const block = document.createElement("div");
+    block.className = "agenda-history-meeting";
+    const h3 = document.createElement("h3");
+    h3.textContent = m.date;
+    block.appendChild(h3);
+    AGENDA_SECTIONS.forEach(sec => {
+      const items = m.items.filter(it => it.section === sec.key);
+      if (!items.length) return;
+      const secLabel = document.createElement("div");
+      secLabel.className = "agenda-history-sec-label";
+      secLabel.textContent = sec.label;
+      block.appendChild(secLabel);
+      items.forEach(it => {
+        const line = document.createElement("div");
+        line.className = "agenda-history-item";
+        let suffix = "";
+        if (it.state === "archived") suffix = ` (archived ${it.archivedDate || ""})`;
+        else if (it.state === "forwarded") suffix = " (forwarded)";
+        line.textContent = `${it.discussed ? "☑" : "☐"} ${it.text || "(untitled)"}${it.owner ? " — " + it.owner : ""}${suffix}`;
+        block.appendChild(line);
+      });
+    });
+    if (m.punchList) {
+      const plLabel = document.createElement("div");
+      plLabel.className = "agenda-history-sec-label";
+      plLabel.textContent = "Punch List";
+      block.appendChild(plLabel);
+      const pre = document.createElement("pre");
+      pre.className = "agenda-history-punchlist";
+      pre.textContent = m.punchList;
+      block.appendChild(pre);
+    }
+    body.appendChild(block);
+  });
 }
 
 // ---- Priority-waterfall recommendation engine ----
@@ -7674,6 +8085,27 @@ document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
   });
 });
 document.getElementById("refreshBtn").addEventListener("click", loadData);
+
+document.getElementById("agendaToggleBtn").addEventListener("click", () => {
+  const drawer = document.getElementById("agendaDrawer");
+  drawer.hidden = !drawer.hidden;
+  document.getElementById("agendaToggleBtn").classList.toggle("active", !drawer.hidden);
+  updateStickyTopHeight();
+});
+document.getElementById("agendaCloseBtn").addEventListener("click", () => {
+  document.getElementById("agendaDrawer").hidden = true;
+  document.getElementById("agendaToggleBtn").classList.remove("active");
+  updateStickyTopHeight();
+});
+document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
+document.getElementById("agendaGeneratePunchBtn").addEventListener("click", generateAgendaPunchList);
+document.getElementById("agendaHistoryBtn").addEventListener("click", () => {
+  renderAgendaHistory();
+  document.getElementById("agendaHistoryModal").classList.add("show");
+});
+document.getElementById("agendaHistoryCloseBtn").addEventListener("click", () => {
+  document.getElementById("agendaHistoryModal").classList.remove("show");
+});
 
 initCollapsibleCards();
 loadData();
