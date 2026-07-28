@@ -118,6 +118,14 @@
     box-shadow: 0 14px 38px rgba(20,30,45,0.38);
     transition: top 0.3s ease;
   }
+  /* An unconditional author `display: flex` above always beats the browser's
+     own `[hidden] { display: none }` UA rule, regardless of specificity --
+     normal-priority author CSS beats normal-priority UA CSS no matter what
+     (same class of bug already hit once in this file for
+     .color-scheme-control[hidden]). Without this, drawer.hidden = true set
+     the DOM attribute correctly but the panel stayed visually on-screen --
+     exactly why the ✕ and the header toggle looked like they did nothing. */
+  #agendaDrawer[hidden] { display: none; }
   /* Rolled up, the drawer shrinks to just its header bar -- but that bar is
      still anchored at the SAME top (the boundary where report content
      begins), so it kept covering the first row or two of whatever table
