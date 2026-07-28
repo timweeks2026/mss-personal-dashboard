@@ -92,36 +92,78 @@
      measured height -- no extra bookkeeping needed for that part. z-index
      40 keeps it above ordinary page content but below the drill-down/
      history modals (z-index 50), so opening one of those from underneath
-     still reads on top. ---- */
+     still reads on top.
+
+     Color scheme: applyAgendaColorScheme() sets --agenda-c0..--agenda-c4 on
+     :root (not just the drawer itself, so the header's toggle button --
+     a sibling element outside the drawer -- can share the same palette) from
+     whichever FIVE_YEAR_PALETTES scheme is chosen, same picker pattern as
+     the Trends tabs. c4 (darkest/boldest) drives the header bar and primary
+     buttons; c1/c2/c3 give the three sections distinct left-border accents
+     so they're tellable apart at a glance mid-meeting. Discussed (green) and
+     Forwarded (amber) stay fixed, universal status colors independent of
+     the chosen scheme -- those signal state, not brand. ---- */
   button#agendaToggleBtn {
     font-size: 13px; padding: 9px 14px; border-radius: 6px;
     border: 1px solid #4a6a90; background: var(--navy-light); color: #fff; cursor: pointer;
   }
   button#agendaToggleBtn:hover { background: #1d4670; }
-  button#agendaToggleBtn.active { background: var(--accent); border-color: var(--accent); }
+  button#agendaToggleBtn.active { background: var(--agenda-c4, var(--accent)); border-color: var(--agenda-c4, var(--accent)); }
   #agendaDrawer {
     position: fixed; top: var(--sticky-top-h, 90px); right: 24px; z-index: 40;
     width: 460px; max-width: calc(100vw - 48px);
     background: #fff; border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px 18px 18px; max-height: calc(100vh - var(--sticky-top-h, 90px) - 20px);
-    overflow-y: auto; box-shadow: 0 8px 28px rgba(20,30,45,0.22);
+    max-height: calc(100vh - var(--sticky-top-h, 90px) - 20px);
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 10px 32px rgba(20,30,45,0.28);
   }
-  .agenda-drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-  .agenda-drawer-head h2 { font-size: 15px; color: var(--navy); margin: 0; }
-  .agenda-drawer-actions { display: flex; align-items: center; gap: 8px; }
+  .agenda-drawer-head {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    background: var(--agenda-c4, var(--navy)); color: #fff; padding: 12px 16px; flex: none;
+  }
+  .agenda-drawer-head h2 { font-size: 15px; margin: 0; color: #fff; font-weight: 700; }
+  .agenda-drawer-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .agenda-drawer-actions select#agendaColorSchemeSelect {
+    font-size: 11px; padding: 4px 5px; border-radius: 5px; min-width: 0;
+    border: 1px solid rgba(255,255,255,0.45); background: rgba(255,255,255,0.14); color: #fff; cursor: pointer;
+  }
+  .agenda-drawer-actions .btn-secondary {
+    font-size: 11.5px; padding: 5px 9px; background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.45); color: #fff;
+  }
+  .agenda-drawer-actions .btn-secondary:hover { background: rgba(255,255,255,0.3); }
+  .agenda-drawer-actions .btn-primary {
+    font-size: 11.5px; padding: 5px 9px; background: #fff; color: var(--agenda-c4, var(--navy));
+    border: 1px solid #fff; font-weight: 700;
+  }
+  .agenda-drawer-actions .btn-primary:hover { background: rgba(255,255,255,0.85); }
+  .agenda-close-btn {
+    background: none; border: none; color: #fff; font-size: 18px; line-height: 1;
+    cursor: pointer; padding: 2px 4px; opacity: 0.85;
+  }
+  .agenda-close-btn:hover { opacity: 1; }
+  .agenda-drawer-body { padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto; }
   .agenda-sections { display: flex; flex-direction: column; gap: 16px; }
-  .agenda-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .agenda-section-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; }
-  .agenda-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
-  .agenda-item-wrap { border-bottom: 1px solid #f0f0f0; padding: 4px 0; }
+  .agenda-section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px; padding: 3px 0 3px 10px; border-left: 4px solid var(--agenda-c2, var(--accent));
+  }
+  .agenda-section[data-key="status"] .agenda-section-head { border-left-color: var(--agenda-c1, var(--accent)); }
+  .agenda-section[data-key="insights"] .agenda-section-head { border-left-color: var(--agenda-c2, var(--accent)); }
+  .agenda-section[data-key="discussion"] .agenda-section-head { border-left-color: var(--agenda-c3, var(--accent)); }
+  .agenda-section-head h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; font-weight: 700; }
+  .agenda-empty { font-size: 12px; color: var(--muted); padding: 6px 0 6px 10px; font-style: italic; }
+  .agenda-item-wrap { border-bottom: 1px solid #f0f0f0; padding: 5px 4px; border-radius: 6px; }
+  .agenda-item-wrap:hover { background: #f8fafc; }
   .agenda-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .agenda-item.archived { opacity: 0.6; }
   .agenda-item.forwarded { background: #fff8e1; border-radius: 6px; padding: 4px 6px; }
-  .agenda-discussed-cb { flex: none; accent-color: var(--good); cursor: pointer; }
+  .agenda-discussed-cb { flex: none; accent-color: var(--good); cursor: pointer; width: 15px; height: 15px; }
   .agenda-item-text {
     flex: 1 1 260px; min-width: 160px; font-size: 13px; padding: 6px 8px;
     border: 1px solid var(--border); border-radius: 5px;
   }
+  .agenda-item-text:focus, .agenda-owner-select:focus { outline: 2px solid var(--agenda-c3, var(--accent)); outline-offset: 1px; }
   .agenda-owner-select { font-size: 12px; padding: 5px 6px; border-radius: 5px; border: 1px solid var(--border); min-width: 110px; }
   .agenda-item-meta { font-size: 11px; color: var(--muted); font-style: italic; }
   .agenda-notes-box { margin: 6px 0 4px 26px; }
@@ -130,14 +172,16 @@
     border: 1px solid var(--border); border-radius: 5px; font-family: inherit;
   }
   .agenda-archived-section { opacity: 0.85; }
+  .agenda-archived-section .agenda-section-head { border-left-color: var(--muted); }
   .agenda-punchlist { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
   .agenda-punchlist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .agenda-punchlist-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; }
+  .agenda-punchlist-head h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--navy); margin: 0; font-weight: 700; }
   .agenda-punchlist-body {
     font-family: inherit; font-size: 13px; white-space: pre-wrap; background: #f8fafc;
-    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 0;
+    border: 1px solid var(--border); border-left: 4px solid var(--agenda-c4, var(--accent));
+    border-radius: 6px; padding: 10px 12px; margin: 0;
   }
-  .agenda-punchlist-body.empty { color: var(--muted); font-style: italic; }
+  .agenda-punchlist-body.empty { color: var(--muted); font-style: italic; border-left-color: var(--border); }
   .agenda-error { color: var(--bad); font-size: 12px; margin-bottom: 6px; }
   .agenda-history-meeting { border-bottom: 1px solid var(--border); padding: 10px 0; }
   .agenda-history-meeting h3 { font-size: 13px; color: var(--navy); margin: 0 0 6px; }
@@ -564,21 +608,24 @@
 
 <div id="agendaDrawer" hidden>
   <div class="agenda-drawer-head">
-    <h2>Meeting Agenda</h2>
+    <h2>📋 Meeting Agenda</h2>
     <div class="agenda-drawer-actions">
+      <select id="agendaColorSchemeSelect" title="Meeting Agenda color scheme"></select>
       <button type="button" class="btn-secondary" id="agendaHistoryBtn">Meeting History</button>
       <button type="button" class="btn-primary" id="agendaNewMeetingBtn">🆕 New Meeting</button>
-      <button type="button" class="modal-close" id="agendaCloseBtn">✕</button>
+      <button type="button" class="agenda-close-btn" id="agendaCloseBtn">✕</button>
     </div>
   </div>
-  <div class="agenda-sections" id="agendaSections"></div>
-  <div class="agenda-punchlist">
-    <div class="agenda-punchlist-head">
-      <h3>Punch List</h3>
-      <button type="button" class="btn-secondary" id="agendaGeneratePunchBtn">✨ Generate Punch List</button>
+  <div class="agenda-drawer-body">
+    <div class="agenda-sections" id="agendaSections"></div>
+    <div class="agenda-punchlist">
+      <div class="agenda-punchlist-head">
+        <h3>📝 Punch List</h3>
+        <button type="button" class="btn-secondary" id="agendaGeneratePunchBtn">✨ Generate Punch List</button>
+      </div>
+      <div id="agendaPunchListError" class="agenda-error" style="display:none;"></div>
+      <pre id="agendaPunchListBody" class="agenda-punchlist-body empty"></pre>
     </div>
-    <div id="agendaPunchListError" class="agenda-error" style="display:none;"></div>
-    <pre id="agendaPunchListBody" class="agenda-punchlist-body empty"></pre>
   </div>
 </div>
 
@@ -3542,11 +3589,26 @@ function saveRetirementData() {
 // buttons and, at New Meeting time, whether it's dropped, kept in history
 // only, or carried into the fresh working set.
 const AGENDA_SECTIONS = [
-  { key: "status", label: "Status" },
-  { key: "insights", label: "Key Insights" },
-  { key: "discussion", label: "Discussion Items" }
+  { key: "status", label: "Status", icon: "📊" },
+  { key: "insights", label: "Key Insights", icon: "💡" },
+  { key: "discussion", label: "Discussion Items", icon: "💬" }
 ];
 const AGENDA_OWNERS = ["Tim", "Hilary"];
+
+// Color scheme picker, same FIVE_YEAR_PALETTES data the Trends tabs use.
+// Applied as CSS custom properties on :root (not just #agendaDrawer) so the
+// header's toggle button -- a sibling element, not a descendant of the
+// drawer -- picks up the same accent. Defaults to Company Vitals rather
+// than Classic Blue: this panel is what's on screen during an actual
+// client meeting, so the CFO's own brand is the more sensible starting
+// point than a neutral analysis-tool default.
+let agendaColorScheme = localStorage.getItem("agendaColorScheme") || "companyVitals";
+function applyAgendaColorScheme() {
+  const palette = (FIVE_YEAR_PALETTES[agendaColorScheme] || FIVE_YEAR_PALETTES.classicBlue).colors;
+  const root = document.documentElement;
+  palette.forEach((c, i) => root.style.setProperty(`--agenda-c${i}`, c));
+}
+applyAgendaColorScheme();
 
 let meetingAgendaData = null;
 let meetingAgendaLoaded = false;
@@ -3759,10 +3821,11 @@ function renderAgendaDrawer() {
   AGENDA_SECTIONS.forEach(sec => {
     const secEl = document.createElement("div");
     secEl.className = "agenda-section";
+    secEl.dataset.key = sec.key;
     const head = document.createElement("div");
     head.className = "agenda-section-head";
     const h3 = document.createElement("h3");
-    h3.textContent = sec.label;
+    h3.textContent = `${sec.icon} ${sec.label}`;
     head.appendChild(h3);
     const addBtn = document.createElement("button");
     addBtn.type = "button";
@@ -8036,6 +8099,16 @@ document.getElementById("fiveYearDetailPicker").addEventListener("change", e => 
     fiveYearColorScheme = sel.value;
     localStorage.setItem("fiveYearColorScheme", fiveYearColorScheme);
     render();
+  });
+})();
+(function initAgendaColorSchemeSelect() {
+  const sel = document.getElementById("agendaColorSchemeSelect");
+  Object.entries(FIVE_YEAR_PALETTES).forEach(([key, def]) => sel.appendChild(new Option(def.label, key)));
+  sel.value = agendaColorScheme;
+  sel.addEventListener("change", () => {
+    agendaColorScheme = sel.value;
+    localStorage.setItem("agendaColorScheme", agendaColorScheme);
+    applyAgendaColorScheme();
   });
 })();
 document.getElementById("bizlineSelect").addEventListener("change", render);
