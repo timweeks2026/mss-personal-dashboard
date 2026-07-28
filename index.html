@@ -249,8 +249,11 @@
      checkbox's, so Notes/Forward/Archive/meta/Restore/Unforward always
      start at one consistent column instead of trailing wherever the main
      row's flex-wrap happens to break. */
-  .agenda-item-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 3px 0 0 30px; }
-  .agenda-notes-box { margin: 6px 0 4px 30px; }
+  /* 39px, not 30 -- aligns with the TEXT inside the box (its left edge
+     plus the box's own 1px border + 8px left padding), not just the box's
+     outer border, per live measurement against the rendered page. */
+  .agenda-item-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 3px 0 0 39px; }
+  .agenda-notes-box { margin: 6px 0 4px 39px; }
   .agenda-notes-box textarea {
     width: 100%; max-width: 600px; min-height: 50px; font-size: 12.5px; padding: 6px 8px;
     border: 1px solid var(--border); border-radius: 5px; font-family: inherit;
