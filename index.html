@@ -127,6 +127,11 @@
     font-size: 11px; padding: 4px 5px; border-radius: 5px; min-width: 0;
     border: 1px solid rgba(255,255,255,0.45); background: rgba(255,255,255,0.14); color: #fff; cursor: pointer;
   }
+  /* The select's own white text (for the closed state, against the dark
+     header bar) otherwise bleeds into the native open dropdown's option
+     list too, rendering white-on-white/invisible there -- options always
+     need their own normal dark text regardless of the closed control's color. */
+  .agenda-drawer-actions select#agendaColorSchemeSelect option { color: var(--text); background: #fff; }
   .agenda-drawer-actions .btn-secondary {
     font-size: 11.5px; padding: 5px 9px; background: rgba(255,255,255,0.16);
     border: 1px solid rgba(255,255,255,0.45); color: #fff;
@@ -137,12 +142,24 @@
     border: 1px solid #fff; font-weight: 700;
   }
   .agenda-drawer-actions .btn-primary:hover { background: rgba(255,255,255,0.85); }
-  .agenda-close-btn {
-    background: none; border: none; color: #fff; font-size: 18px; line-height: 1;
-    cursor: pointer; padding: 2px 4px; opacity: 0.85;
+  /* Rolls the body up/down in place (header bar stays put, showing the
+     panel is still "there") rather than closing the whole thing -- the
+     circular backdrop + rotation is the "cool graphic" for what's
+     otherwise just a plain caret. Actual open/close of the whole floating
+     panel is still the header's own "Meeting Agenda" toggle button. */
+  .agenda-collapse-btn {
+    background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.4); color: #fff;
+    font-size: 15px; line-height: 1; width: 26px; height: 26px; border-radius: 50%;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform 0.25s ease, background 0.15s ease;
   }
-  .agenda-close-btn:hover { opacity: 1; }
-  .agenda-drawer-body { padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto; }
+  .agenda-collapse-btn:hover { background: rgba(255,255,255,0.32); }
+  #agendaDrawer.collapsed .agenda-collapse-btn { transform: rotate(180deg); }
+  .agenda-drawer-body {
+    padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto;
+    max-height: 2000px; opacity: 1; transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
+  }
+  #agendaDrawer.collapsed .agenda-drawer-body { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
   .agenda-sections { display: flex; flex-direction: column; gap: 16px; }
   .agenda-section-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -166,6 +183,17 @@
   .agenda-item-text:focus, .agenda-owner-select:focus { outline: 2px solid var(--agenda-c3, var(--accent)); outline-offset: 1px; }
   .agenda-owner-select { font-size: 12px; padding: 5px 6px; border-radius: 5px; border: 1px solid var(--border); min-width: 110px; }
   .agenda-item-meta { font-size: 11px; color: var(--muted); font-style: italic; }
+  /* Compact icon-only buttons for Notes/Forward/Archive/Restore/Unforward --
+     small and neutral so they read as secondary controls, not competing
+     with the item's own text for attention. */
+  .agenda-icon-btn {
+    flex: none; width: 24px; height: 24px; padding: 0; font-size: 12px; line-height: 1;
+    border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--muted);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .agenda-icon-btn:hover { background: #f1f4f8; color: var(--text); }
+  .agenda-icon-btn.danger { color: var(--bad); }
+  .agenda-icon-btn.danger:hover { background: #fdecea; }
   .agenda-notes-box { margin: 6px 0 4px 26px; }
   .agenda-notes-box textarea {
     width: 100%; max-width: 600px; min-height: 50px; font-size: 12.5px; padding: 6px 8px;
@@ -613,10 +641,10 @@
       <select id="agendaColorSchemeSelect" title="Meeting Agenda color scheme"></select>
       <button type="button" class="btn-secondary" id="agendaHistoryBtn">Meeting History</button>
       <button type="button" class="btn-primary" id="agendaNewMeetingBtn">🆕 New Meeting</button>
-      <button type="button" class="agenda-close-btn" id="agendaCloseBtn">✕</button>
+      <button type="button" class="agenda-collapse-btn" id="agendaCollapseBtn" title="Roll up / roll down">▾</button>
     </div>
   </div>
-  <div class="agenda-drawer-body">
+  <div class="agenda-drawer-body" id="agendaDrawerBody">
     <div class="agenda-sections" id="agendaSections"></div>
     <div class="agenda-punchlist">
       <div class="agenda-punchlist-head">
@@ -3761,26 +3789,28 @@ function buildAgendaItemRow(it) {
   notesArea.addEventListener("input", () => { it.notes = notesArea.value; saveMeetingAgendaData(); });
   notesBox.appendChild(notesArea);
 
-  const notesToggle = document.createElement("button");
-  notesToggle.type = "button";
-  notesToggle.className = "btn-secondary agenda-notes-btn";
-  notesToggle.textContent = "📝 Notes";
+  // Compact icon-only buttons (title attr carries the label as a hover
+  // tooltip) -- kept deliberately small so they read as secondary controls
+  // and don't compete with the item's own text for attention.
+  function iconBtn(icon, title, extraClass) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "agenda-icon-btn" + (extraClass ? " " + extraClass : "");
+    b.textContent = icon;
+    b.title = title;
+    return b;
+  }
+
+  const notesToggle = iconBtn("📝", "Notes");
   notesToggle.addEventListener("click", () => { notesBox.hidden = !notesBox.hidden; });
   row.appendChild(notesToggle);
 
   if (it.state === "active") {
-    const fwdBtn = document.createElement("button");
-    fwdBtn.type = "button";
-    fwdBtn.className = "btn-secondary";
-    fwdBtn.textContent = "↪ Forward";
-    fwdBtn.title = "Carry this item to the next meeting";
+    const fwdBtn = iconBtn("↪", "Forward to next meeting");
     fwdBtn.addEventListener("click", () => { it.state = "forwarded"; renderAgendaDrawer(); saveMeetingAgendaData(); });
     row.appendChild(fwdBtn);
 
-    const archBtn = document.createElement("button");
-    archBtn.type = "button";
-    archBtn.className = "btn-danger";
-    archBtn.textContent = "🗄 Archive";
+    const archBtn = iconBtn("🗄", "Archive", "danger");
     archBtn.addEventListener("click", () => {
       it.state = "archived";
       it.archivedDate = new Date().toLocaleDateString("en-US");
@@ -3794,10 +3824,7 @@ function buildAgendaItemRow(it) {
     meta.textContent = it.state === "archived" ? `Archived ${it.archivedDate || ""}` : "Will carry to next meeting";
     row.appendChild(meta);
 
-    const undoBtn = document.createElement("button");
-    undoBtn.type = "button";
-    undoBtn.className = "btn-secondary";
-    undoBtn.textContent = it.state === "archived" ? "↩ Restore" : "✕ Unforward";
+    const undoBtn = iconBtn(it.state === "archived" ? "↩" : "✕", it.state === "archived" ? "Restore" : "Unforward");
     undoBtn.addEventListener("click", () => {
       it.state = "active";
       it.archivedDate = null;
@@ -8172,10 +8199,10 @@ document.getElementById("agendaToggleBtn").addEventListener("click", () => {
   const drawer = document.getElementById("agendaDrawer");
   drawer.hidden = !drawer.hidden;
   document.getElementById("agendaToggleBtn").classList.toggle("active", !drawer.hidden);
+  if (!drawer.hidden) drawer.classList.remove("collapsed"); // always reopen expanded
 });
-document.getElementById("agendaCloseBtn").addEventListener("click", () => {
-  document.getElementById("agendaDrawer").hidden = true;
-  document.getElementById("agendaToggleBtn").classList.remove("active");
+document.getElementById("agendaCollapseBtn").addEventListener("click", () => {
+  document.getElementById("agendaDrawer").classList.toggle("collapsed");
 });
 document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
 document.getElementById("agendaGeneratePunchBtn").addEventListener("click", generateAgendaPunchList);
