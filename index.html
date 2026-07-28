@@ -159,7 +159,15 @@
     padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto;
     max-height: 2000px; opacity: 1; transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.3s ease;
   }
-  #agendaDrawer.collapsed .agenda-drawer-body { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+  /* min-height: 0 and flex: none are the actual fix -- flex items default to
+     min-height: auto, which stops them shrinking below their content's
+     natural size regardless of max-height (a well-known flexbox gotcha)
+     unless overridden explicitly. Without this, max-height: 0 above was
+     silently ignored and the body never visually collapsed. */
+  #agendaDrawer.collapsed .agenda-drawer-body {
+    max-height: 0; min-height: 0; flex: none; opacity: 0;
+    padding-top: 0; padding-bottom: 0; overflow: hidden;
+  }
   .agenda-sections { display: flex; flex-direction: column; gap: 16px; }
   .agenda-section-head {
     display: flex; align-items: center; justify-content: space-between;
