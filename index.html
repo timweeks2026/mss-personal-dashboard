@@ -84,12 +84,12 @@
   /* ---- Meeting Agenda drawer: a floating panel (position: fixed), not part
      of the page's normal document flow -- it hovers over the report rather
      than pushing content down, so the main page stays fully scrollable and
-     clickable underneath while it's open. Docked top-right, right below the
-     real sticky header region: `top` reuses --sticky-top-h (already
-     maintained by updateStickyTopHeight() for the table sticky-header
-     feature), which now always reflects header+nav+status only, since a
-     fixed-position element never contributes to its normal-flow parent's
-     measured height -- no extra bookkeeping needed for that part. z-index
+     clickable underneath while it's open. Docked top-right, just below the
+     title/Entity/Month/Refresh header row specifically (--header-only-h,
+     also maintained by updateStickyTopHeight()) rather than the full
+     sticky chrome (--sticky-top-h, header+nav-tabs+status) -- overlapping
+     the nav-tabs/status row is intentional here, a deliberately higher
+     dock than before. z-index
      40 keeps it above ordinary page content but below the drill-down/
      history modals (z-index 50), so opening one of those from underneath
      still reads on top.
@@ -110,10 +110,10 @@
   button#agendaToggleBtn:hover { background: #1d4670; }
   button#agendaToggleBtn.active { background: var(--agenda-c4, var(--accent)); border-color: var(--agenda-c4, var(--accent)); }
   #agendaDrawer {
-    position: fixed; top: var(--sticky-top-h, 90px); right: 24px; z-index: 40;
+    position: fixed; top: var(--header-only-h, 90px); right: 12px; z-index: 40;
     width: 460px; max-width: calc(100vw - 48px);
     background: var(--agenda-c0, #fff); border: 1px solid var(--border); border-radius: 10px;
-    max-height: calc(100vh - var(--sticky-top-h, 90px) - 20px);
+    max-height: calc(100vh - var(--header-only-h, 90px) - 20px);
     overflow: hidden; display: flex; flex-direction: column;
     box-shadow: 0 14px 38px rgba(20,30,45,0.38);
     transition: top 0.3s ease;
@@ -126,14 +126,11 @@
      the DOM attribute correctly but the panel stayed visually on-screen --
      exactly why the ✕ and the header toggle looked like they did nothing. */
   #agendaDrawer[hidden] { display: none; }
-  /* Rolled up, the drawer shrinks to just its header bar -- but that bar is
-     still anchored at the SAME top (the boundary where report content
-     begins), so it kept covering the first row or two of whatever table
-     sits underneath. Shifting collapsed `top` up by the header bar's own
-     height (measured live at toggle time, since it can wrap to 2 lines on
-     narrow viewports) tucks the rolled-up bar back into the sticky
-     header/nav chrome above the content instead -- clear of every report. */
-  #agendaDrawer.collapsed { top: calc(var(--sticky-top-h, 90px) - var(--agenda-head-h, 54px)); }
+  /* No separate collapsed `top` needed anymore -- now that the drawer
+     already docks right below the header (well above where report
+     content begins), a rolled-up bar at that same anchor is already clear
+     of every report without the extra upward shift the old (lower)
+     dock position used to require. */
   .agenda-drawer-head {
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
     background: var(--agenda-c4, var(--navy)); color: #fff; padding: 12px 16px; flex: none;
@@ -466,20 +463,28 @@
   /* ---- Key Insights board ---------------------------------------------
      Single left-justified column, capped well short of full width, so
      tiles never reach under where the Meeting Agenda drawer floats
-     (position:fixed, right:24px, ~460px wide) -- the two can stay open
+     (position:fixed, right:12px, ~460px wide) -- the two can stay open
      side by side during a meeting instead of the board hiding behind the
      drawer. .insight-tile itself needs no visual styling of its own (the
      reused .card inside it already supplies border/background/shadow)
      beyond position:relative as a home for the ▲▼✕✎ controls. */
-  .insight-board-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
-  .insight-board-head-actions { display: flex; gap: 8px; flex: none; }
+  /* Stacked, all left-aligned -- Present/Add Custom Insight used to sit at
+     the top-right of this panel, the same side of the screen the Meeting
+     Agenda drawer floats over, so they'd disappear behind it whenever the
+     Agenda was open. Left side keeps them reachable regardless. */
+  .insight-board-head { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+  .insight-board-head-actions { display: flex; gap: 8px; }
   /* max-width shrinks with the viewport (not just a flat 640px) so the
      board's right edge always clears the Agenda drawer's left edge
-     (position:fixed, right:24px, ~460px wide) regardless of how wide the
+     (position:fixed, right:12px, ~460px wide) regardless of how wide the
      browser window actually is — a flat cap only worked on wide windows;
      on a narrower one the board's own right edge could still land past
-     where the drawer starts. 320px floor keeps this sane on tiny viewports. */
-  .insight-grid { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; max-width: min(640px, max(320px, calc(100vw - 560px))); }
+     where the drawer starts. 320px floor keeps this sane on tiny viewports.
+     Cap raised to 720 (was 640) and the reserved buffer trimmed to 540
+     (was 560) -- a bit more room now that the drawer itself sits 12px
+     further right than before, verified via live measurement to still
+     clear the drawer's left edge at both narrow and wide viewports. */
+  .insight-grid { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; max-width: min(720px, max(320px, calc(100vw - 540px))); }
   .insight-tile { position: relative; width: 100%; }
   .insight-tile-controls { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; z-index: 1; }
   .insight-tile .card { padding-top: 32px; }
@@ -1212,10 +1217,8 @@
   <div id="panel-insights" class="tab-panel" hidden>
     <section>
       <div class="insight-board-head">
-        <div>
-          <h2 class="section-title">Key Insights</h2>
-          <div class="section-sub">Pinned cards, line items, and charts from anywhere in the dashboard — always live, showing whatever Entity/Month is currently selected above. Look for the 📌 button on a card or account row, or "Pin this chart" on Account Trends / 5-Year Trends. Use "+ Add Custom Insight" for a freeform box — paste a screenshot, type a note, or call out a stat with a red/green arrow.</div>
-        </div>
+        <h2 class="section-title">Key Insights</h2>
+        <div class="section-sub">Pinned cards, line items, and charts from anywhere in the dashboard — always live, showing whatever Entity/Month is currently selected above. Look for the 📌 button on a card or account row, or "Pin this chart" on Account Trends / 5-Year Trends. Use "+ Add Custom Insight" for a freeform box — paste a screenshot, type a note, or call out a stat with a red/green arrow.</div>
         <div class="insight-board-head-actions">
           <button type="button" class="btn-secondary" id="addCustomInsightBtn">+ Add Custom Insight</button>
           <button type="button" class="btn-secondary" id="presentModeBtn">🖥 Present</button>
@@ -5917,6 +5920,11 @@ function render() {
 function updateStickyTopHeight() {
   const el = document.getElementById("stickyTop");
   if (el) document.documentElement.style.setProperty("--sticky-top-h", el.offsetHeight + "px");
+  // Just the title/Entity/Month/Refresh row, not nav-tabs + status row too
+  // -- the Agenda drawer docks here (see its own CSS comment) rather than
+  // below the full sticky chrome, per Tim's explicit ask to move it higher.
+  const headerEl = document.querySelector("header");
+  if (headerEl) document.documentElement.style.setProperty("--header-only-h", headerEl.offsetHeight + "px");
 }
 window.addEventListener("resize", updateStickyTopHeight);
 
@@ -9259,10 +9267,7 @@ document.getElementById("agendaToggleBtn").addEventListener("click", () => {
   if (!drawer.hidden) drawer.classList.remove("collapsed"); // always reopen expanded
 });
 document.getElementById("agendaCollapseBtn").addEventListener("click", () => {
-  const drawer = document.getElementById("agendaDrawer");
-  const head = drawer.querySelector(".agenda-drawer-head");
-  if (head) drawer.style.setProperty("--agenda-head-h", (head.getBoundingClientRect().height + 2) + "px");
-  drawer.classList.toggle("collapsed");
+  document.getElementById("agendaDrawer").classList.toggle("collapsed");
 });
 document.getElementById("agendaCloseBtn").addEventListener("click", closeAgendaDrawer);
 document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
