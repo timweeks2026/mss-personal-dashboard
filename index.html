@@ -154,15 +154,18 @@
   /* Rolls the body up/down in place (header bar stays put, showing the
      panel is still "there") rather than closing the whole thing -- the
      circular backdrop + rotation is the "cool graphic" for what's
-     otherwise just a plain caret. Actual open/close of the whole floating
-     panel is still the header's own "Meeting Agenda" toggle button. */
-  .agenda-collapse-btn {
+     otherwise just a plain caret. The separate ✕ next to it fully closes
+     the drawer (same as the header's own "Meeting Agenda" toggle button) --
+     both affordances are offered side by side since some users want a
+     quick roll-up mid-scroll and others want it fully gone. */
+  .agenda-collapse-btn, .agenda-close-btn {
     background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.4); color: #fff;
     font-size: 15px; line-height: 1; width: 26px; height: 26px; border-radius: 50%;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     transition: transform 0.25s ease, background 0.15s ease;
   }
-  .agenda-collapse-btn:hover { background: rgba(255,255,255,0.32); }
+  .agenda-close-btn { font-size: 13px; }
+  .agenda-collapse-btn:hover, .agenda-close-btn:hover { background: rgba(255,255,255,0.32); }
   #agendaDrawer.collapsed .agenda-collapse-btn { transform: rotate(180deg); }
   .agenda-drawer-body {
     padding: 14px 18px 18px; overflow-y: auto; flex: 1 1 auto;
@@ -659,6 +662,7 @@
       <button type="button" class="btn-secondary" id="agendaHistoryBtn">Meeting History</button>
       <button type="button" class="btn-primary" id="agendaNewMeetingBtn">🆕 New Meeting</button>
       <button type="button" class="agenda-collapse-btn" id="agendaCollapseBtn" title="Roll up / roll down">▾</button>
+      <button type="button" class="agenda-close-btn" id="agendaCloseBtn" title="Close">✕</button>
     </div>
   </div>
   <div class="agenda-drawer-body" id="agendaDrawerBody">
@@ -8212,6 +8216,11 @@ document.querySelectorAll('input[name="scaleMode"]').forEach(r => {
 });
 document.getElementById("refreshBtn").addEventListener("click", loadData);
 
+function closeAgendaDrawer() {
+  const drawer = document.getElementById("agendaDrawer");
+  drawer.hidden = true;
+  document.getElementById("agendaToggleBtn").classList.remove("active");
+}
 document.getElementById("agendaToggleBtn").addEventListener("click", () => {
   const drawer = document.getElementById("agendaDrawer");
   drawer.hidden = !drawer.hidden;
@@ -8224,6 +8233,7 @@ document.getElementById("agendaCollapseBtn").addEventListener("click", () => {
   if (head) drawer.style.setProperty("--agenda-head-h", (head.getBoundingClientRect().height + 2) + "px");
   drawer.classList.toggle("collapsed");
 });
+document.getElementById("agendaCloseBtn").addEventListener("click", closeAgendaDrawer);
 document.getElementById("agendaNewMeetingBtn").addEventListener("click", startNewMeeting);
 document.getElementById("agendaGeneratePunchBtn").addEventListener("click", generateAgendaPunchList);
 document.getElementById("agendaHistoryBtn").addEventListener("click", () => {
