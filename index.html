@@ -459,6 +459,17 @@
   .insight-placeholder { color: var(--muted); font-style: italic; }
   .insight-chart .chart-card { margin-top: 10px; }
   .insight-chart .chart-card:first-of-type { margin-top: 14px; }
+  /* Both always exist in the DOM (see applyTileTitleAndNote) so live edits
+     are a plain textContent write — :empty hides them with no extra JS. */
+  .card-title:empty { display: none; }
+  .insight-tile-note { font-size: 11.5px; color: var(--muted); font-style: italic; margin-top: 3px; }
+  .insight-tile-note:empty { display: none; }
+  .insight-edit-panel { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
+  .insight-edit-panel input[type="text"], .insight-edit-panel textarea {
+    font-size: 12.5px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit; width: 100%; box-sizing: border-box;
+  }
+  .insight-edit-panel textarea { min-height: 48px; resize: vertical; }
 
   /* Present mode: hides nav/status chrome and enlarges tiles for screen-
      sharing, toggled by #presentModeBtn — session-only, not persisted. */
@@ -467,6 +478,9 @@
   @media (max-width: 700px) { body.presenting .insight-grid { grid-template-columns: 1fr; } }
   body.presenting .insight-tile .card-value { font-size: 32px; }
   body.presenting .insight-tile .card-title { font-size: 14px; }
+  /* Reorder/remove/edit chrome reads as an editing tool, not part of the
+     slide — hide it while actually presenting to a client. */
+  body.presenting .insight-tile-controls { display: none; }
 
   .chip-row-caption { font-size: 10.5px; color: var(--muted); margin-top: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
   .chip-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -3020,7 +3034,12 @@ function renderBusinessLines(companies) {
   function addDetailRow(label, series, polarity, account, sectionKey) {
     const drillMeta = account ? { kind: "account", account, companies } : null;
     const cells = buildPeriodCells(periodPairsFor(series, currentMonthIdx), polarity, false, drillMeta);
-    tbody.appendChild(buildRow("detail", label, cells));
+    // Re-derivable directly from just the account name (see
+    // computeBusinessLineSeries) -- doesn't need to remember which
+    // business line the account belonged to, since bizlineSelect's current
+    // selection is irrelevant to what a single account's own series is.
+    const rowPin = account ? { type: "lineItem", source: "businessLines", account, label, polarity } : null;
+    tbody.appendChild(buildRow("detail", label, cells, null, rowPin));
   }
 
   lines.forEach(line => {
@@ -4156,8 +4175,17 @@ function buildCardTile(tile, summaryLines) {
   return line ? buildCardDom(line) : buildInsightPlaceholder("This card is no longer available.");
 }
 
-function buildLineItemTile(tile, sectionData) {
-  const data = computeLineItemSeries(tile, sectionData);
+// source dispatch: undefined/"plStatement" (also covers the Budget tab's
+// plain Revenue/Cost of Sales/Other Income/Other Expenses rows, which are
+// literally the same sectionData rows) uses computeLineItemSeries;
+// "cashFlow"/"businessLines" re-derive from their own tab's data model but
+// share this exact same This-Month/YTD/TTM tile layout since both are real
+// monthly series just like a P&L account.
+function buildLineItemTile(tile, sectionData, companies) {
+  let data;
+  if (tile.source === "cashFlow") data = computeCashFlowLineItemSeries(tile, companies);
+  else if (tile.source === "businessLines") data = computeBusinessLineSeries(tile, companies);
+  else data = computeLineItemSeries(tile, sectionData);
   if (!data) return buildInsightPlaceholder(`${tile.label || tile.account} — no data for the current entity/month.`);
 
   const wrap = document.createElement("div");
@@ -4177,6 +4205,119 @@ function buildLineItemTile(tile, sectionData) {
     rows.appendChild(row);
   });
   wrap.appendChild(rows);
+  return wrap;
+}
+
+// ---- Cash Flow / Business Lines re-derive (share buildLineItemTile above) --
+function computeCashFlowLineItemSeries(pin, companies) {
+  const model = buildSocfCashFlowModel(companies);
+  const bucket = model[pin.bucket];
+  if (!bucket) return null;
+  const row = bucket.rows.find(r => r.account === pin.account && r.company === pin.company);
+  return row ? { series: row.values, label: pin.label || pin.account, polarity: pin.polarity || "pos" } : null;
+}
+function computeBusinessLineSeries(pin, companies) {
+  // A single-account call — doesn't need to know (or care) which business
+  // line the account nominally belongs to, or what's currently selected in
+  // the Business Lines tab's own dropdown.
+  const group = buildBusinessLineGroup([pin.account], companies, currentMonthIdx);
+  const row = group.rows.find(r => r.account === pin.account);
+  return row ? { series: row.values, label: pin.label || pin.account, polarity: pin.polarity || "pos" } : null;
+}
+
+// ---- Balance Sheet re-derive (own tile layout: point-in-time, not This
+// Month/YTD/TTM) -----------------------------------------------------------
+function computeBalanceSheetSeries(pin, companies) {
+  const { rows } = buildBsCategory(pin.category, companies, currentMonthIdx);
+  const row = rows.find(r => r.account === pin.account);
+  return row ? { values: row.values, label: pin.label || pin.account } : null;
+}
+function buildBalanceSheetTile(tile, companies) {
+  const data = computeBalanceSheetSeries(tile, companies);
+  if (!data) return buildInsightPlaceholder(`${tile.label || tile.account} — no data for the current entity/month.`);
+
+  const wrap = document.createElement("div");
+  wrap.className = "card";
+  const idx = currentMonthIdx;
+  wrap.innerHTML = `<div class="card-title">${escapeHtml(data.label)}</div>` +
+    `<div class="card-value${data.values[idx] < 0 ? " neg" : ""}">${fmtMoney(data.values[idx])}</div>`;
+
+  const rows = document.createElement("div");
+  rows.className = "cmp-rows";
+  const priorMonth = idx >= 1 ? data.values[idx - 1] : null;
+  const priorYear = idx >= 12 ? data.values[idx - 12] : null;
+  rows.appendChild(cmpRow("vs. Prior Month", priorMonth != null ? { current: data.values[idx], prior: priorMonth } : null, "pos"));
+  rows.appendChild(cmpRow("vs. Prior Year", priorYear != null ? { current: data.values[idx], prior: priorYear } : null, "pos"));
+  wrap.appendChild(rows);
+  return wrap;
+}
+
+// ---- Compare (Actual vs Budget) / History re-derive — both are built off
+// the same buildBudgetTree() nodes, just summarized differently (vs. budget
+// vs. across many periods), so they share this one tree-node lookup. ----
+function findBudgetTreeNode(nodes, key) {
+  for (const node of nodes) {
+    if (node.key === key) return node;
+    if (node.children && node.children.length) {
+      const found = findBudgetTreeNode(node.children, key);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+function findBudgetTreeNodeFor(pin, summaryLines, sectionData, companies) {
+  const model = buildSocfCashFlowModel(companies);
+  const tree = buildBudgetTree(summaryLines, sectionData, model);
+  return findBudgetTreeNode(tree, pin.nodeKey);
+}
+function buildCompareTile(tile, summaryLines, sectionData, companies) {
+  const node = findBudgetTreeNodeFor(tile, summaryLines, sectionData, companies);
+  if (!node) return buildInsightPlaceholder(`${tile.label} — no data for the current entity/month.`);
+
+  const endIdx = currentMonthIdx;
+  const ytd = ytdRange(months[endIdx].year, months[endIdx].monthNum);
+  const ytdMonths = ytd ? (ytd[1] - ytd[0] + 1) : 1;
+  const actualM = node.series[endIdx] || 0;
+  const budgetM = node.monthlyBudget;
+  const actualYtd = ytd ? sumRange(node.series, ytd[0], ytd[1]) : 0;
+  const budgetYtd = budgetM * ytdMonths;
+
+  const wrap = document.createElement("div");
+  wrap.className = "card";
+  wrap.innerHTML = `<div class="card-title">${escapeHtml(tile.label || node.label)}</div>`;
+  const rows = document.createElement("div");
+  rows.className = "cmp-rows";
+  [["This Month", actualM, budgetM], ["Year-to-Date", actualYtd, budgetYtd]].forEach(([label, actual, budget]) => {
+    const arrow = arrowFor(actual, budget, tile.polarity || "pos", 0.5);
+    const diff = actual - budget;
+    const row = document.createElement("div");
+    row.className = "cmp-row";
+    row.innerHTML = `<span class="cmp-label">${label} — ${fmtMoney(actual)} vs. Budget ${fmtMoney(budget)}</span>` +
+      `<span class="cmp-value arrow-${arrow.cls}">${fmtMoney(diff)} <span class="arrow-${arrow.cls}">${arrow.symbol}</span></span>`;
+    rows.appendChild(row);
+  });
+  wrap.appendChild(rows);
+  return wrap;
+}
+function buildHistoryTile(tile, summaryLines, sectionData, companies) {
+  const node = findBudgetTreeNodeFor(tile, summaryLines, sectionData, companies);
+  if (!node) return buildInsightPlaceholder(`${tile.label} — no data for the current entity/month.`);
+
+  // Always the 13-trailing-months view regardless of whichever basis
+  // (monthly/quarterly/yearly) happens to be selected on the History tab
+  // right now — a pinned tile shouldn't depend on unrelated UI state.
+  const periods = historyPeriods("monthly", currentMonthIdx);
+  const xLabels = periods.map(p => p.label);
+  const values = periods.map(p => p.range ? sumRange(node.series, p.range[0], p.range[1]) : null);
+  const palette = activeAccountTrendsPalette();
+  const seriesList = [{ label: tile.label || node.label, color: palette[0], values }];
+
+  const wrap = document.createElement("div");
+  wrap.className = "card insight-chart";
+  wrap.innerHTML = `<div class="card-title">${escapeHtml(tile.label || node.label)} — 13-Month History</div>`;
+  const { card, svg, tooltip } = buildChartCardEl("Monthly", buildAccountTrendLegendEl(seriesList));
+  wrap.appendChild(card);
+  renderMultiLineChart(svg, tooltip, xLabels, seriesList, false);
   return wrap;
 }
 
@@ -4270,21 +4411,100 @@ function buildFiveYearChartTile(tile, companies, summaryLines, budgetTree) {
   return wrap;
 }
 
+// Guarantees a tile has a .card-title element to work with (placeholders
+// don't build one on their own) — created empty if genuinely missing, and
+// left empty/hidden via CSS (`.card-title:empty`) unless a custom title is
+// actually set, so this never adds visible blank space to an unannotated
+// placeholder tile.
+function ensureTileTitleEl(inner) {
+  let titleEl = inner.querySelector(".card-title");
+  if (!titleEl) {
+    titleEl = document.createElement("div");
+    titleEl.className = "card-title";
+    inner.insertBefore(titleEl, inner.firstChild);
+  }
+  return titleEl;
+}
+
+// Applies a pinned tile's optional customTitle/note on top of whatever the
+// tile's own builder already produced. The note element always exists
+// (CSS `:empty` hides it when blank) specifically so later live-typed edits
+// (see buildInsightEditPanel) are a plain textContent write, never a
+// create/destroy — that's what lets the edit panel update the tile without
+// a full render() (which would both recompute the whole page and steal
+// focus from the input mid-keystroke).
+function applyTileTitleAndNote(inner, tile) {
+  const titleEl = ensureTileTitleEl(inner);
+  if (!titleEl.dataset.defaultTitle) titleEl.dataset.defaultTitle = titleEl.textContent;
+  if (tile.customTitle) titleEl.textContent = tile.customTitle;
+
+  const noteEl = document.createElement("div");
+  noteEl.className = "insight-tile-note";
+  noteEl.textContent = tile.note || "";
+  titleEl.insertAdjacentElement("afterend", noteEl);
+  return { titleEl, noteEl };
+}
+
+// Hidden-by-default panel toggled by the tile's ✎ button. Deliberately
+// writes straight to titleEl/noteEl's textContent on every keystroke
+// instead of calling saveInsightsBoardData()+render() — a full render()
+// rebuilds the entire board (and the rest of the page's data), which would
+// both be wasteful and yank keyboard focus out of whatever input the user
+// is mid-sentence in.
+function buildInsightEditPanel(tile, titleEl, noteEl) {
+  const panel = document.createElement("div");
+  panel.className = "insight-edit-panel";
+  panel.hidden = true;
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.placeholder = "Custom title (optional)";
+  titleInput.value = tile.customTitle || "";
+  titleInput.addEventListener("input", () => {
+    tile.customTitle = titleInput.value;
+    titleEl.textContent = titleInput.value || titleEl.dataset.defaultTitle || "";
+    saveInsightsBoardData();
+  });
+
+  const noteInput = document.createElement("textarea");
+  noteInput.placeholder = "Note (optional) — shown under the title";
+  noteInput.value = tile.note || "";
+  noteInput.addEventListener("input", () => {
+    tile.note = noteInput.value;
+    noteEl.textContent = noteInput.value;
+    saveInsightsBoardData();
+  });
+
+  panel.appendChild(titleInput);
+  panel.appendChild(noteInput);
+  return panel;
+}
+
 function buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree) {
   let inner;
   if (tile.type === "card") inner = buildCardTile(tile, summaryLines);
-  else if (tile.type === "lineItem") inner = buildLineItemTile(tile, sectionData);
+  else if (tile.type === "lineItem" && tile.source === "balanceSheet") inner = buildBalanceSheetTile(tile, companies);
+  else if (tile.type === "lineItem" && tile.source === "compare") inner = buildCompareTile(tile, summaryLines, sectionData, companies);
+  else if (tile.type === "lineItem" && tile.source === "history") inner = buildHistoryTile(tile, summaryLines, sectionData, companies);
+  else if (tile.type === "lineItem") inner = buildLineItemTile(tile, sectionData, companies);
   else if (tile.type === "chart" && tile.source === "accountTrends") inner = buildAccountTrendChartTile(tile, companies, summaryLines, chartsBudgetTree);
   else if (tile.type === "chart" && tile.source === "fiveYearTrends") inner = buildFiveYearChartTile(tile, companies, summaryLines, chartsBudgetTree);
   else inner = buildInsightPlaceholder("Unrecognized tile.");
 
+  const { titleEl, noteEl } = applyTileTitleAndNote(inner, tile);
+
   const outer = document.createElement("div");
-  outer.className = "insight-tile" + (tile.type === "chart" ? " chart-tile" : "");
+  // History's tile is chart-like (a mini trend line) even though its pin
+  // type is "lineItem", not "chart" -- give it the same 2-column span so
+  // its x-axis labels stay legible.
+  const isChartLike = tile.type === "chart" || tile.source === "history";
+  outer.className = "insight-tile" + (isChartLike ? " chart-tile" : "");
   outer.appendChild(inner);
+  outer.appendChild(buildInsightEditPanel(tile, titleEl, noteEl));
   return outer;
 }
 
-function buildInsightTileControls(tile, sortedTiles, idx) {
+function buildInsightTileControls(tile, sortedTiles, idx, tileOuter) {
   const controls = document.createElement("div");
   controls.className = "insight-tile-controls";
   const mk = (label, title, disabled, cls, onClick) => {
@@ -4297,6 +4517,10 @@ function buildInsightTileControls(tile, sortedTiles, idx) {
     b.addEventListener("click", onClick);
     return b;
   };
+  controls.appendChild(mk("✎", "Edit title / note", false, "", () => {
+    const panel = tileOuter.querySelector(".insight-edit-panel");
+    panel.hidden = !panel.hidden;
+  }));
   controls.appendChild(mk("▲", "Move up", idx === 0, "", () => moveInsightPin(tile.id, -1)));
   controls.appendChild(mk("▼", "Move down", idx === sortedTiles.length - 1, "", () => moveInsightPin(tile.id, 1)));
   controls.appendChild(mk("✕", "Remove from Key Insights", false, "danger", () => removeInsightPin(tile.id)));
@@ -4326,7 +4550,7 @@ function renderInsightsBoard(summaryLines, sectionData, companies, entVal, chart
   board.style.display = "";
   tiles.forEach((tile, idx) => {
     const dom = buildInsightTileDom(tile, summaryLines, sectionData, companies, chartsBudgetTree);
-    dom.appendChild(buildInsightTileControls(tile, tiles, idx));
+    dom.appendChild(buildInsightTileControls(tile, tiles, idx, dom));
     board.appendChild(dom);
   });
 }
@@ -6058,8 +6282,13 @@ function renderBalanceSheet(entVal, companies) {
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
-  function addDetail(label, values, rowKey, account) {
-    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildBsCells(values, currentMonthIdx, account, companies));
+  // category (the BS category this account lives under, e.g. "Bank
+  // Accounts") lets a pin re-run buildBsCategory(category, ...) later and
+  // find the same row again -- Balance Sheet has no single flat "sectionData"
+  // the way P&L does, so category is this tab's equivalent key.
+  function addDetail(label, values, rowKey, account, category) {
+    const rowPin = account ? { type: "lineItem", source: "balanceSheet", account, category, label } : null;
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildBsCells(values, currentMonthIdx, account, companies), null, rowPin);
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
@@ -6079,7 +6308,7 @@ function renderBalanceSheet(entVal, companies) {
       addInto(total, catTotal);
       const key = "bs_" + cat;
       addLine(BS_CATEGORY_LABEL[cat], catTotal, key);
-      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values, key + "::" + r.account, r.account));
+      if (expandedKeys.has(key)) rows.forEach(r => addDetail(r.account, r.values, key + "::" + r.account, r.account, cat));
     });
     return total;
   }
@@ -6152,9 +6381,14 @@ function renderCashFlow(entVal, companies) {
   // these rows are per-(account, company), so a naive drill against the
   // whole entity selection would pull in the OTHER company's transactions
   // for the same account name too when viewing Consolidated.
-  function addDetail(label, series, rowKey, account, company) {
+  // bucket ("nonCash"/"debt"/"asset"/"unclassified"/"workingCapital"/
+  // "distribution") is the model[] key this row's account+company came
+  // from -- captured in the pin so Key Insights can re-run
+  // buildSocfCashFlowModel and find the exact same row later.
+  function addDetail(label, series, rowKey, account, company, bucket) {
     const drillMeta = account ? { kind: "account", account, companies: [company] } : null;
-    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false, drillMeta));
+    const rowPin = (account && bucket) ? { type: "lineItem", source: "cashFlow", account, company, bucket, label, polarity: "pos" } : null;
+    const tr = buildRow("detail", labelWithHighlight(label, null, rowKey, entVal), buildPeriodCells(periodPairsFor(series, currentMonthIdx), "pos", false, drillMeta), null, rowPin);
     if (isRowHighlighted(entVal, rowKey)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
   }
@@ -6162,29 +6396,29 @@ function renderCashFlow(entVal, companies) {
     const blanks = COL_GROUPS.flatMap(() => [{ text: "" }, { text: "" }, { text: "" }, { text: "" }]);
     tbody.appendChild(buildRow("section-sub-header", label, blanks));
   }
-  function addDetailRows(rows, expandKey) {
-    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values, expandKey + "::" + r.account + "::" + r.company, r.account, r.company));
+  function addDetailRows(rows, expandKey, bucket) {
+    if (expandedKeys.has(expandKey)) rows.forEach(r => addDetail(r.account + " — " + r.company, r.values, expandKey + "::" + r.account + "::" + r.company, r.account, r.company, bucket));
   }
 
   addSummary("Net Income", model.netIncome, null, null, "cf_netIncome");
   const nonCashKey = "cf_nonCash";
   addSummary("Non-Cash Add-backs (Depreciation & Amortization)", model.nonCash.total, nonCashKey);
-  addDetailRows(model.nonCash.rows, nonCashKey);
+  addDetailRows(model.nonCash.rows, nonCashKey, "nonCash");
   addSummary("Cash Earnings", model.cashEarnings, null, "grandtotal", "cf_cashEarnings");
 
   addSubHeader("Use of Funds — Where the Cash Went");
   const debtKey = "cf_debt";
   addSummary("Debt Principal — Net (Paydown) / New Borrowing", model.debt.total, debtKey);
-  addDetailRows(model.debt.rows, debtKey);
+  addDetailRows(model.debt.rows, debtKey, "debt");
 
   const assetKey = "cf_asset";
   addSummary("Asset Purchases", model.asset.total, assetKey);
-  addDetailRows(model.asset.rows, assetKey);
+  addDetailRows(model.asset.rows, assetKey, "asset");
 
   if (model.unclassified.rows.length) {
     const unclassKey = "cf_unclassified";
     addSummary("⚠ Needs Review (Unclassified)", model.unclassified.total, unclassKey);
-    addDetailRows(model.unclassified.rows, unclassKey);
+    addDetailRows(model.unclassified.rows, unclassKey, "unclassified");
   }
 
   addSummary("Total Use of Funds", model.useOfFunds, null, "grandtotal", "cf_totalUseOfFunds");
@@ -6193,12 +6427,12 @@ function renderCashFlow(entVal, companies) {
   addSubHeader("Disclosed Separately — Not Counted as Use of Funds");
   const wcKey = "cf_workingCapital";
   addSummary("Operating Balance Changes (AR, Payables, Credit Card Float, Payroll Liability Timing, etc.)", model.workingCapital.total, wcKey);
-  addDetailRows(model.workingCapital.rows, wcKey);
+  addDetailRows(model.workingCapital.rows, wcKey, "workingCapital");
 
   if (model.distribution.rows.length) {
     const distKey = "cf_distribution";
     addSummary("Owner Draws / Distributions (already reflected in P&L expenses per Tim's bookkeeping)", model.distribution.total, distKey);
-    addDetailRows(model.distribution.rows, distKey);
+    addDetailRows(model.distribution.rows, distKey, "distribution");
   }
 
   addSummary("Net Increase / (Decrease) in Cash — All-In", model.netChangeAll, null, "grandtotal", "cf_netChangeAll");
@@ -6412,6 +6646,18 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
     const labelTd = document.createElement("td");
     labelTd.className = "label-col";
     labelTd.innerHTML = labelWithHighlight(label, null, key, entVal);
+    // Pinnable only when opts.section is given -- that's only ever passed
+    // for the plain Revenue/Cost of Sales/Other Income/Other Expenses loop
+    // below, whose rows are the exact same sectionData rows P&L Statement
+    // already exposes via computeLineItemSeries. Deliberately NOT wired for
+    // Expenses subgroups (may be Merge-As'd into a shared label with no
+    // single matching sectionData row) or loan/debt rows (a different data
+    // model entirely, same family as Cash Flow's own accounts) — a
+    // half-verified pin that silently shows the wrong account is worse
+    // than no pin button at all.
+    if (opts.account && opts.section) {
+      addPinButton(labelTd, { type: "lineItem", account: opts.account, section: opts.section, label, polarity: opts.polarity || "pos" }, "Pin this line item to Key Insights");
+    }
     tr.appendChild(labelTd);
     // Last Month is the one drillable column on this tab (per explicit
     // scope: not the trailing averages, not Budget/Annualized). Only
@@ -6660,7 +6906,7 @@ function renderTypicalMonth(summaryLines, sectionData, companies, entVal) {
           const rowKey = typicalAccountKey("pl_" + sectionKey, r.account, null);
           const status = statusOf(rowKey);
           if (status === "removed" || status === "seasonal") return; // shown in their own section instead
-          addDetailRow(rowKey, r.account, r.values, { account: r.account });
+          addDetailRow(rowKey, r.account, r.values, { account: r.account, section: sectionKey, polarity: SECTION_POLARITY[sectionKey] || "pos" });
         });
       });
     }
@@ -6839,18 +7085,24 @@ function renderCompare(summaryLines, sectionData, companies, entVal) {
     }
     return [...monthCells, ...ytdCells];
   }
+  // Only ever pinned for true leaf nodes (no children) -- a group/summary
+  // row (Revenue, Expenses, ...) is more of a card-equivalent than "one
+  // line item," same scope line P&L Statement already draws between its
+  // own summary rows (not pinnable) and detail rows (pinnable).
   function addNode(node, polarity, depth) {
     const hasChildren = node.children.length > 0;
     const expandKey = hasChildren ? "cmp_" + node.key : null;
     const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
-    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node, polarity), expandKey);
+    const rowPin = hasChildren ? null : { type: "lineItem", source: "compare", nodeKey: node.key, label: node.label, polarity };
+    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node, polarity), expandKey, rowPin);
     if (isRowHighlighted(entVal, node.key)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
     if (hasChildren && expandedKeys.has(expandKey)) {
       node.children.forEach(child => {
         if (child.children.length) addNode(child, polarity, depth + 1);
         else {
-          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child, polarity));
+          const childRowPin = { type: "lineItem", source: "compare", nodeKey: child.key, label: child.label, polarity };
+          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child, polarity), null, childRowPin);
           if (isRowHighlighted(entVal, child.key)) childTr.classList.add("row-highlighted");
           tbody.appendChild(childTr);
         }
@@ -6948,14 +7200,16 @@ function renderHistory(summaryLines, sectionData, companies, entVal) {
     const hasChildren = node.children.length > 0;
     const expandKey = hasChildren ? "hist_" + node.key : null;
     const rowClass = node.style === "grandtotal" ? "grandtotal" : depth > 0 ? "summary-line nested" : "summary-line";
-    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node), expandKey);
+    const rowPin = hasChildren ? null : { type: "lineItem", source: "history", nodeKey: node.key, label: node.label };
+    const tr = buildRow(rowClass, labelWithHighlight(node.label, expandKey, node.key, entVal), cellsFor(node), expandKey, rowPin);
     if (isRowHighlighted(entVal, node.key)) tr.classList.add("row-highlighted");
     tbody.appendChild(tr);
     if (hasChildren && expandedKeys.has(expandKey)) {
       node.children.forEach(child => {
         if (child.children.length) addNode(child, depth + 1);
         else {
-          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child));
+          const childRowPin = { type: "lineItem", source: "history", nodeKey: child.key, label: child.label };
+          const childTr = buildRow("detail", labelWithHighlight(child.label, null, child.key, entVal), cellsFor(child), null, childRowPin);
           if (isRowHighlighted(entVal, child.key)) childTr.classList.add("row-highlighted");
           tbody.appendChild(childTr);
         }
