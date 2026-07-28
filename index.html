@@ -244,7 +244,13 @@
   .agenda-action-btn:hover { color: var(--text); text-decoration: underline; }
   .agenda-action-btn.danger { color: var(--bad); }
   .agenda-action-btn.danger:hover { color: var(--bad); text-decoration: underline; }
-  .agenda-notes-box { margin: 6px 0 4px 26px; }
+  /* Same 26px left indent as .agenda-notes-box below -- lines both up with
+     the text box's own left edge (checkbox width + gap), not the
+     checkbox's, so Notes/Forward/Archive/meta/Restore/Unforward always
+     start at one consistent column instead of trailing wherever the main
+     row's flex-wrap happens to break. */
+  .agenda-item-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 3px 0 0 30px; }
+  .agenda-notes-box { margin: 6px 0 4px 30px; }
   .agenda-notes-box textarea {
     width: 100%; max-width: 600px; min-height: 50px; font-size: 12.5px; padding: 6px 8px;
     border: 1px solid var(--border); border-radius: 5px; font-family: inherit;
@@ -4001,6 +4007,14 @@ function buildAgendaItemRow(it) {
   notesArea.addEventListener("input", () => { it.notes = notesArea.value; saveMeetingAgendaData(); });
   notesBox.appendChild(notesArea);
 
+  // Own row below the checkbox/text/owner line, indented to the same left
+  // edge as the text box itself (26px -- matches .agenda-notes-box's own
+  // indent just below) rather than trailing wherever they land in the main
+  // row's flex-wrap -- that's what "left aligned with the Item box" means
+  // here: a consistent left edge, not floating at the end of a wrapped line.
+  const actions = document.createElement("div");
+  actions.className = "agenda-item-actions";
+
   // Small text-label buttons -- the word itself is the label now (title
   // attr only added when it says more than the label alone, e.g. "Forward"
   // vs. the fuller "Forward to next meeting" tooltip).
@@ -4015,12 +4029,12 @@ function buildAgendaItemRow(it) {
 
   const notesToggle = actionBtn("Notes");
   notesToggle.addEventListener("click", () => { notesBox.hidden = !notesBox.hidden; });
-  row.appendChild(notesToggle);
+  actions.appendChild(notesToggle);
 
   if (it.state === "active") {
     const fwdBtn = actionBtn("Forward", "Forward to next meeting");
     fwdBtn.addEventListener("click", () => { it.state = "forwarded"; renderAgendaDrawer(); saveMeetingAgendaData(); });
-    row.appendChild(fwdBtn);
+    actions.appendChild(fwdBtn);
 
     const archBtn = actionBtn("Archive", null, "danger");
     archBtn.addEventListener("click", () => {
@@ -4029,12 +4043,12 @@ function buildAgendaItemRow(it) {
       renderAgendaDrawer();
       saveMeetingAgendaData();
     });
-    row.appendChild(archBtn);
+    actions.appendChild(archBtn);
   } else {
     const meta = document.createElement("span");
     meta.className = "agenda-item-meta";
     meta.textContent = it.state === "archived" ? `Archived ${it.archivedDate || ""}` : "Will carry to next meeting";
-    row.appendChild(meta);
+    actions.appendChild(meta);
 
     const undoBtn = actionBtn(it.state === "archived" ? "Restore" : "Unforward");
     undoBtn.addEventListener("click", () => {
@@ -4043,10 +4057,11 @@ function buildAgendaItemRow(it) {
       renderAgendaDrawer();
       saveMeetingAgendaData();
     });
-    row.appendChild(undoBtn);
+    actions.appendChild(undoBtn);
   }
 
   wrap.appendChild(row);
+  wrap.appendChild(actions);
   wrap.appendChild(notesBox);
   return wrap;
 }
