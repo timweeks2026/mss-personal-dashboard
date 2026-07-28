@@ -4484,27 +4484,32 @@ function buildCustomTile(tile) {
   return { wrap, imageWrap, arrowSpan, numberSpan, emptyHint };
 }
 
-// Shared by paste and file-picker: resizes/re-encodes client-side (JPEG,
-// capped width) before storing -- a raw phone-screenshot-sized PNG would
-// otherwise bloat the single Redis document this whole board is stored in
-// far more than a compressed copy actually needs to. Capped at 1100 (not a
-// tighter 700) since the display CSS now stretches the image to fill the
-// tile's full width (including Present mode's much wider ~70vw tiles) --
-// too low a cap here means that stretch upscales past native resolution
-// and looks soft/blurry instead of crisp.
+// Shared by paste and file-picker: resizes/re-encodes client-side before
+// storing -- a raw phone-screenshot-sized original would otherwise bloat
+// the single Redis document this whole board is stored in more than it
+// needs to. PNG (lossless), not JPEG -- the overwhelming use case here is
+// a screenshot of a table/dashboard/chart (sharp text and hard edges),
+// exactly the content JPEG's compression artifacts (ringing/blur around
+// high-contrast edges) look worst on; PNG compresses flat-color,
+// sharp-edged content like this very well anyway, so there's little size
+// cost for a real quality gain. Capped at 1400 wide (not a tighter number)
+// since the display CSS stretches the image to fill the tile's full width
+// (including Present mode's much wider ~70vw tiles) -- too low a cap here
+// means that stretch upscales past native resolution and looks soft no
+// matter what format it's stored in.
 function readAndStoreImage(file, tile, refs) {
   if (!file || file.type.indexOf("image") !== 0) return;
   const reader = new FileReader();
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      const maxW = 1100;
+      const maxW = 1400;
       const scale = Math.min(1, maxW / img.width);
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(img.width * scale));
       canvas.height = Math.max(1, Math.round(img.height * scale));
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      tile.imageDataUrl = canvas.toDataURL("image/jpeg", 0.82);
+      tile.imageDataUrl = canvas.toDataURL("image/png");
       refs.imageWrap.innerHTML = "";
       const displayImg = document.createElement("img");
       displayImg.src = tile.imageDataUrl;
