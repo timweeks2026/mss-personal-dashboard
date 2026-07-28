@@ -231,18 +231,19 @@
   .agenda-icon-btn:hover { background: #f1f4f8; color: var(--text); }
   .agenda-icon-btn.danger { color: var(--bad); }
   .agenda-icon-btn.danger:hover { background: #fdecea; }
-  /* Small text-label buttons for Notes/Forward/Archive/Restore/Unforward --
-     small font so they still read as secondary controls, not competing
-     with the item's own text for attention, but the word itself is what's
-     shown rather than a glyph that needs a hover tooltip to decode. */
+  /* Plain word links for Notes/Forward/Archive/Restore/Unforward -- no box,
+     no border, no background at all, deliberately muted so the eye lands
+     on the item's own text first and these read as secondary actions, not
+     UI chrome. Underline only appears on hover, as the sole interactivity
+     cue (cursor:pointer does the rest). */
   .agenda-action-btn {
-    flex: none; padding: 3px 8px; font-size: 10.5px; line-height: 1.3; white-space: nowrap;
-    border-radius: 5px; border: 1px solid var(--border); background: #fff; color: var(--muted);
-    cursor: pointer;
+    flex: none; padding: 0; margin: 0; font-size: 10.5px; line-height: 1.3; white-space: nowrap;
+    border: none; background: none; color: var(--muted);
+    cursor: pointer; text-decoration: none;
   }
-  .agenda-action-btn:hover { background: #f1f4f8; color: var(--text); }
+  .agenda-action-btn:hover { color: var(--text); text-decoration: underline; }
   .agenda-action-btn.danger { color: var(--bad); }
-  .agenda-action-btn.danger:hover { background: #fdecea; }
+  .agenda-action-btn.danger:hover { color: var(--bad); text-decoration: underline; }
   .agenda-notes-box { margin: 6px 0 4px 26px; }
   .agenda-notes-box textarea {
     width: 100%; max-width: 600px; min-height: 50px; font-size: 12.5px; padding: 6px 8px;
@@ -521,11 +522,11 @@
      sharing, toggled by #presentModeBtn — session-only, not persisted.
      Single column, same as normal mode (still stacks vertically, not a
      2-up grid — a 2-column split made each graph smaller, not larger),
-     just widened to 75% of the viewport instead of normal mode's narrow
-     Agenda-safe cap, since 25% is reserved for the Agenda drawer even
+     just widened to 70% of the viewport instead of normal mode's narrow
+     Agenda-safe cap, leaving the rest clear for the Agenda drawer even
      while presenting. */
   body.presenting .tabs, body.presenting #statusRow { display: none; }
-  body.presenting .insight-grid { max-width: 75vw; gap: 22px; }
+  body.presenting .insight-grid { max-width: 70vw; gap: 22px; }
   body.presenting .insight-tile .card-value { font-size: 32px; }
   body.presenting .insight-tile .card-title { font-size: 14px; }
   /* Reorder/remove/edit chrome reads as an editing tool, not part of the
@@ -3827,7 +3828,11 @@ let meetingAgendaData = null;
 let meetingAgendaLoaded = false;
 let meetingAgendaSaveTimer = null;
 
-function defaultAgendaData() { return { current: { items: [], punchList: "" }, history: [] }; }
+// customOwners holds names added on the fly via the owner dropdown's
+// "+ Add new..." option, on top of the fixed AGENDA_OWNERS default list --
+// persisted at the top level (not per-meeting) since a name added once
+// should stay available in every future meeting, not just the current one.
+function defaultAgendaData() { return { current: { items: [], punchList: "" }, history: [], customOwners: [] }; }
 
 async function fetchMeetingAgendaData() {
   try {
@@ -3835,6 +3840,9 @@ async function fetchMeetingAgendaData() {
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const server = await resp.json();
     meetingAgendaData = (server && server.current) ? server : defaultAgendaData();
+    // Older saved documents predate customOwners -- backfill so the owner
+    // dropdown's "+ Add new..." always has a real array to push into.
+    if (!meetingAgendaData.customOwners) meetingAgendaData.customOwners = [];
   } catch (err) {
     console.warn("Couldn't load meeting agenda data: " + err.message);
     meetingAgendaData = defaultAgendaData();
@@ -3960,9 +3968,28 @@ function buildAgendaItemRow(it) {
   ownerSel.className = "agenda-owner-select";
   ownerSel.disabled = it.state === "archived";
   ownerSel.appendChild(new Option("Owner…", ""));
-  AGENDA_OWNERS.forEach(o => ownerSel.appendChild(new Option(o, o)));
+  const allOwners = [...AGENDA_OWNERS, ...(meetingAgendaData.customOwners || [])];
+  allOwners.forEach(o => ownerSel.appendChild(new Option(o, o)));
+  ownerSel.appendChild(new Option("+ Add new…", "__ADD_NEW__"));
   ownerSel.value = it.owner || "";
-  ownerSel.addEventListener("change", () => { it.owner = ownerSel.value; saveMeetingAgendaData(); });
+  // "+ Add new..." prompts for a name once, adds it to the persisted
+  // customOwners roster (so it's there for every future item/meeting too,
+  // not just this one), assigns it to this item, then re-renders so every
+  // other item's dropdown picks up the new option as well.
+  ownerSel.addEventListener("change", () => {
+    if (ownerSel.value === "__ADD_NEW__") {
+      const name = (prompt("Add a new owner name:") || "").trim();
+      if (!name) { ownerSel.value = it.owner || ""; return; }
+      meetingAgendaData.customOwners = meetingAgendaData.customOwners || [];
+      if (!allOwners.includes(name)) meetingAgendaData.customOwners.push(name);
+      it.owner = name;
+      saveMeetingAgendaData();
+      renderAgendaDrawer();
+      return;
+    }
+    it.owner = ownerSel.value;
+    saveMeetingAgendaData();
+  });
   row.appendChild(ownerSel);
 
   const notesBox = document.createElement("div");
