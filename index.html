@@ -514,7 +514,13 @@
   /* ---- Custom (freeform) insight tile ---------------------------------- */
   .insight-custom-image { margin-bottom: 8px; }
   .insight-custom-image:empty { display: none; }
-  .insight-custom-image img { max-width: 100%; border-radius: 6px; display: block; }
+  /* width:100% (not max-width) -- a pasted screenshot's native size is
+     usually smaller than the tile, so capping alone left it floating at
+     its own small size with dead space around it instead of actually
+     filling the space it was given, the opposite of what a "maximize this
+     space" screenshot embed should do. height:auto keeps its aspect ratio
+     while it stretches to fill. */
+  .insight-custom-image img { width: 100%; height: auto; border-radius: 6px; display: block; }
   .insight-custom-stat { display: flex; align-items: baseline; gap: 8px; }
   .insight-custom-arrow { font-size: 20px; }
   .insight-custom-arrow.good { color: var(--good); }
@@ -4478,14 +4484,18 @@ function buildCustomTile(tile) {
 // Shared by paste and file-picker: resizes/re-encodes client-side (JPEG,
 // capped width) before storing -- a raw phone-screenshot-sized PNG would
 // otherwise bloat the single Redis document this whole board is stored in
-// far more than a compressed copy actually needs to.
+// far more than a compressed copy actually needs to. Capped at 1100 (not a
+// tighter 700) since the display CSS now stretches the image to fill the
+// tile's full width (including Present mode's much wider ~70vw tiles) --
+// too low a cap here means that stretch upscales past native resolution
+// and looks soft/blurry instead of crisp.
 function readAndStoreImage(file, tile, refs) {
   if (!file || file.type.indexOf("image") !== 0) return;
   const reader = new FileReader();
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      const maxW = 700;
+      const maxW = 1100;
       const scale = Math.min(1, maxW / img.width);
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(img.width * scale));
