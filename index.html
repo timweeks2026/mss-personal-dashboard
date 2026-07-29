@@ -1259,9 +1259,15 @@
 <footer id="footerNote"></footer>
 
 <script>
-const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=607248385&single=true&output=csv";
-const BS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=1691156209&single=true&output=csv";
-const SOCF_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=561480335&single=true&output=csv";
+// Raw "PL"/"BS"/"SOCF" tabs (G-Accon-refreshed, live, daily) -- the real
+// data source as of 2026-07-29. Previously pointed at "PL/BS/SOCF Detail
+// (Mapped)" (gid=607248385/1691156209/561480335), a one-time mapping
+// snapshot from initial setup that stopped tracking the raw tabs' daily
+// refresh (confirmed stale: blank for recent months while the raw tabs
+// already had real data for the same period).
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=2069734491&single=true&output=csv";
+const BS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=0&single=true&output=csv";
+const SOCF_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvSOrg10QbUa18YoGU22zp4OvJ0MnWNyj2KbQZhk57UGy1f3RCBn_OH-WOapk-pH5ixM9DRhY_OJQV/pub?gid=2024353584&single=true&output=csv";
 // Recurring Payments tab reads two raw QuickBooks "General Ledger" exports
 // (one per entity — QBO doesn't consolidate these across companies), each
 // published to web as CSV. Real QBO shape, not a custom "Mapped" tab: a few
@@ -1351,8 +1357,8 @@ const AVG_WINDOWS = [
 
 let monthLabels = [];       // raw strings, e.g. "Aug 21"
 let months = [];            // parsed [{label, year, monthNum, index}]
-let records = [];           // {section, company, standardAccount, values:[...], flag}
-let bsRecords = [];         // {topLevel, category, company, standardAccount, values:[...], flag}
+let records = [];           // {section, company, standardAccount, values:[...]}
+let bsRecords = [];         // {category, company, standardAccount, values:[...]}
 let socfRecords = [];       // {section, company, standardAccount, values:[...]} — section: Operating/Investing/Financing Activities
 let glRecords = [];         // {date: Date, company, payee, account, amount, memo} — one row per GL transaction
 let glLoadErrors = [];      // [{label, message}] — per-source parse/fetch failures, surfaced on the Recurring Payments tab
@@ -1368,15 +1374,21 @@ let debtDetailOpen = false;
 // "Category" text produced by the Standard BS COA tab's carry-forward
 // classifier (verbatim raw QBO section headers — e.g. "Non-current liabilities"
 // and "Other Current Liability" are QBO's actual wording, not typos). Display
-// labels below normalize these into standard financial-statement terms. ----
+// labels below normalize these into standard financial-statement terms.
+// "Other Current Asset" is genuinely singular in the raw "BS" tab's own
+// section-header row (confirmed directly against the live sheet) -- the old
+// "BS Detail (Mapped)" tab apparently normalized it to the plural "Other
+// Current Assets" this constant used to use, which silently matches nothing
+// now that the raw tab is the data source. Keys below match the raw export
+// verbatim; BS_CATEGORY_LABEL's values are the nicer display labels. ----
 const BS_CATEGORY_ORDER = {
-  assets: ["Bank Accounts", "Accounts Receivable", "Other Current Assets", "Fixed Assets", "Other Assets"],
+  assets: ["Bank Accounts", "Accounts Receivable", "Other Current Asset", "Fixed Assets", "Other Assets"],
   liabilities: ["Accounts Payable", "Credit Cards", "Other Current Liability", "Non-current liabilities"],
   equity: ["Equity"]
 };
 const BS_CATEGORY_LABEL = {
   "Bank Accounts": "Bank Accounts", "Accounts Receivable": "Accounts Receivable",
-  "Other Current Assets": "Other Current Assets", "Fixed Assets": "Fixed Assets", "Other Assets": "Other Assets",
+  "Other Current Asset": "Other Current Assets", "Fixed Assets": "Fixed Assets", "Other Assets": "Other Assets",
   "Accounts Payable": "Accounts Payable", "Credit Cards": "Credit Cards",
   "Other Current Liability": "Other Current Liabilities", "Non-current liabilities": "Long-Term Liabilities",
   "Equity": "Equity"
@@ -1472,21 +1484,69 @@ function setStatus(msg, isError) {
   el.className = isError ? "error" : "";
 }
 
-// Parses a "Mapped" CSV whose first `leadingCols` columns are text fields,
-// followed by one column per month, followed optionally by a Consolidated Flag
-// column. Shared shape between PL Detail (Mapped) and BS Detail (Mapped).
-function parseMappedRows(text, leadingCols) {
+// Parses one of the raw G-Accon-refreshed exports ("PL"/"BS"/"SOCF") --
+// live, daily-updated tabs, replacing the old "PL/BS/SOCF Detail (Mapped)"
+// tabs, which were a one-time mapping snapshot from initial setup that
+// never tracked the raw tabs' daily refresh (confirmed stale: blank for
+// recent months while the raw tabs already had real data). Finds the
+// header row by scanning for column B (index 1) === "Company" rather than
+// assuming a fixed row, since the report's front-matter (title/date-range/
+// generated-for/last-updated lines) varies in length. Ported from the same
+// function already proven on the Macklin/Johnson/Titan/Trey/Mohave
+// dashboards, which all read these raw tabs directly and never had a
+// Mapped-tab intermediary to begin with.
+function extractStatementRows(text, expectedMonthCount) {
   const rows = parseCSV(text);
-  if (!rows.length) throw new Error("Empty response");
-  const header = rows[0];
-  let monthEnd = leadingCols;
-  while (monthEnd < header.length && header[monthEnd].trim() !== "" && header[monthEnd].trim().toLowerCase() !== "consolidated flag") monthEnd++;
-  const labels = header.slice(leadingCols, monthEnd);
-  let flagCol = -1;
-  for (let c = monthEnd; c < header.length; c++) {
-    if (header[c].trim().toLowerCase() === "consolidated flag") { flagCol = c; break; }
+  let headerIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if ((rows[i][1] || "").trim() === "Company") { headerIdx = i; break; }
   }
-  return { rows, labels, monthEnd, flagCol };
+  if (headerIdx === -1) throw new Error("Could not find header row");
+  const header = rows[headerIdx];
+  const STOP_LABELS = new Set(["trim", "lookup", "ytd", "py ytd"]);
+  let monthEnd = 2;
+  while (monthEnd < header.length) {
+    const h = (header[monthEnd] || "").trim();
+    if (h === "" || STOP_LABELS.has(h.toLowerCase())) break;
+    monthEnd++;
+  }
+  if (expectedMonthCount != null) monthEnd = Math.min(monthEnd, 2 + expectedMonthCount);
+  const labels = header.slice(2, monthEnd);
+  const dataRows = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const account = (r[0] || "").trim();
+    const company = (r[1] || "").trim();
+    if (!account && !company) continue;
+    const values = [];
+    for (let m = 2; m < monthEnd; m++) values.push(parseNum(r[m]));
+    dataRows.push({ account, company, values });
+  }
+  return { labels, dataRows };
+}
+
+// Walks a raw statement tab's data rows: a blank-Company row whose Account
+// text exactly matches one of `sectionKeys` opens a new "current" section;
+// any other blank-Company row (a "Total X" subtotal, or a wrapper/derived
+// line like "Assets"/"Current Assets"/"Gross Profit") is skipped without
+// disturbing `current`; a non-blank-Company row becomes a leaf record
+// tagged with whichever section is currently open.
+function buildLeafRecords(dataRows, sectionKeys, sectionField) {
+  const records = [];
+  const companySet = new Set();
+  let current = null;
+  for (const row of dataRows) {
+    if (!row.company) {
+      if (sectionKeys.includes(row.account)) current = row.account;
+      continue;
+    }
+    if (current == null) continue;
+    const rec = { company: row.company, standardAccount: row.account, values: row.values };
+    rec[sectionField] = current;
+    records.push(rec);
+    companySet.add(rec.company);
+  }
+  return { records, companySet };
 }
 
 // Parses a date cell from Google Sheets' published CSV. Sheets renders dates
@@ -2681,69 +2741,34 @@ async function loadData() {
       })
     ]);
 
-    const pl = parseMappedRows(plText, 4);
+    const pl = extractStatementRows(plText, null);
     monthLabels = pl.labels;
     months = monthLabels.map((l, i) => parseMonthLabel(l, i));
-    hasFlagColumn = pl.flagCol !== -1;
 
-    records = [];
-    const companySet = new Set();
-    const flagByCompany = new Map();
-    for (let i = 1; i < pl.rows.length; i++) {
-      const r = pl.rows[i];
-      if (r.length < 4) continue;
-      const section = r[0].trim();
-      const company = r[2].trim();
-      const standardAccount = r[3].trim();
-      if (!company || !standardAccount) continue;
-      const values = [];
-      for (let m = 4; m < pl.monthEnd; m++) values.push(parseNum(r[m]));
-      const flag = hasFlagColumn ? (r[pl.flagCol] || "").trim() : null;
-      records.push({ section, company, standardAccount, values, flag });
-      companySet.add(company);
-      if (flag) flagByCompany.set(company, flag);
-    }
-    allCompanies = [...companySet].sort();
+    const plParsed = buildLeafRecords(pl.dataRows, SECTION_KEYS, "section");
+    records = plParsed.records;
+    allCompanies = [...plParsed.companySet].sort();
     PL_ACCOUNT_SECTION = new Map(records.map(r => [r.standardAccount, r.section]));
 
-    // BS Detail (Mapped): Top Level, Category, Raw Account, Company, Standard Account, months…, Consolidated Flag
-    const bs = parseMappedRows(bsText, 5);
-    bsRecords = [];
-    for (let i = 1; i < bs.rows.length; i++) {
-      const r = bs.rows[i];
-      if (r.length < 5) continue;
-      const topLevel = r[0].trim();
-      const category = r[1].trim();
-      const company = r[3].trim();
-      const standardAccount = r[4].trim();
-      if (!company || !standardAccount) continue;
-      const values = [];
-      for (let m = 5; m < bs.monthEnd; m++) values.push(parseNum(r[m]));
-      bsRecords.push({ topLevel, category, company, standardAccount, values });
-    }
+    const bs = extractStatementRows(bsText, monthLabels.length);
     if (bs.labels.length !== monthLabels.length) {
       console.warn("Balance Sheet month columns (" + bs.labels.length + ") don't match P&L (" + monthLabels.length + ") — BS/Cash Flow tabs may misalign.");
     }
+    const BS_LEAF_KEYS = [...BS_CATEGORY_ORDER.assets, ...BS_CATEGORY_ORDER.liabilities, ...BS_CATEGORY_ORDER.equity];
+    bsRecords = buildLeafRecords(bs.dataRows, BS_LEAF_KEYS, "category").records;
 
-    // SOCF Detail (Mapped): Section, Raw Company, Company, Standard Account, months…
-    const socf = parseMappedRows(socfText, 4);
-    socfRecords = [];
-    for (let i = 1; i < socf.rows.length; i++) {
-      const r = socf.rows[i];
-      if (r.length < 4) continue;
-      const section = r[0].trim();
-      const company = r[2].trim();
-      const standardAccount = r[3].trim();
-      if (!company || !standardAccount) continue;
-      const values = [];
-      for (let m = 4; m < socf.monthEnd; m++) values.push(parseNum(r[m]));
-      socfRecords.push({ section, company, standardAccount, values });
-    }
+    const socf = extractStatementRows(socfText, monthLabels.length);
     if (socf.labels.length !== monthLabels.length) {
       console.warn("SOCF month columns (" + socf.labels.length + ") don't match P&L (" + monthLabels.length + ") — Cash Flow tab may misalign.");
     }
+    socfRecords = buildLeafRecords(socf.dataRows, ["Operating Activities", "Investing Activities", "Financing Activities"], "section").records;
 
-    buildEntityGroups(flagByCompany);
+    // Raw "PL"/"BS"/"SOCF" tabs have no "Consolidated Flag" column (that was
+    // a "Mapped"-tab-only artifact) -- hasFlagColumn is always false here,
+    // so buildEntityGroups falls through to its CORE_ENTITIES fallback,
+    // which already correctly covers MSS's fixed 2-entity model.
+    hasFlagColumn = false;
+    buildEntityGroups(new Map());
     populateEntityDropdown();
     populateMonthDropdown();
     render();
